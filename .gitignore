@@ -1,0 +1,6 @@
+env_tesi/
+__pycache__/
+output/
+datasets/
+*.csv
+*.pt
