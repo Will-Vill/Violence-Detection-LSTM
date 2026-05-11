@@ -4,3 +4,4 @@ output/
 datasets/
 *.csv
 *.pt
+env_mac/
