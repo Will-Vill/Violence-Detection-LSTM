@@ -5,3 +5,4 @@ datasets/
 *.csv
 *.pt
 env_mac/
+.vscode/
