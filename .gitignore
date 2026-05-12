@@ -6,3 +6,6 @@ datasets/
 *.pt
 env_mac/
 .vscode/
+.DS_Store
+grafici/
+modelli/
