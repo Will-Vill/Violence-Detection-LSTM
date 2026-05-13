@@ -9,16 +9,14 @@ from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, classification_report
 
-# ==========================================
-# SETUP DEVICE (Hardware)
-# ==========================================
-# Questa riga cerca CUDA (NVIDIA), poi MPS (Mac Apple Silicon), altrimenti usa la CPU
+# Seleziona hardware
 dispositivo = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 print(f"Viene utilizzato il dispositivo: {dispositivo}")
+
 CARTELLA_INPUT = "output"
 CARTELLA_MODELLI = "modelli"
 
-
+# Costanti e iperparametri della rete
 FINESTRA = 30
 STRIDE = 15
 NUM_FEATURES = 34
@@ -33,8 +31,13 @@ BATCH_SIZE = 32
 EPOCHE = 50
 PAZIENZA = 10
 
-
+# PREPARAZIONE DATI
 def crea_sequenze_da_csv(percorso_csv):
+    """
+    Legge un file CSV contenente i keypoints estratti.
+    Applica una sliding window per dividere i dati in sequenze temporali
+    per ID.
+    """
     df = pd.read_csv(percorso_csv)
     
     sequenze_video = []
@@ -49,7 +52,14 @@ def crea_sequenze_da_csv(percorso_csv):
     return sequenze_video
 
 
+
 def carica_dataset(split):
+    """
+    Cerca le cartelle (train/val) e costruisce i dataset finali,
+    associa l'etichetta 1 per fight e 0 per no_fight e ritorna gli array
+    numpy per essere convertiti in tensori.
+    """
+
     X = []
     y = []
 
@@ -76,7 +86,12 @@ def carica_dataset(split):
 
 
 
+# CLASSI PYTORCH
 class FightDataset(torch.utils.data.Dataset):
+    """
+    Converte gli array numpy di features (X) ed etichette (y) in tensori
+    cosi da poter essere gestiti durante il training.
+    """
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.long)
@@ -89,7 +104,12 @@ class FightDataset(torch.utils.data.Dataset):
 
 
 
+
 class LSTMClassificatore(nn.Module):
+    """
+    Architettura della rete neurale (Riferimento: Capitolo 3 della tesi).
+    Composto da 2 livelli LSTM sequenziali e 3 livelli Fully Connected.
+    """
     def __init__(self):
         super(LSTMClassificatore, self).__init__()
         self.lstm1 = nn.LSTM(input_size=NUM_FEATURES, hidden_size=HIDDEN_1, batch_first=True)
@@ -103,6 +123,7 @@ class LSTMClassificatore(nn.Module):
         self.fc3 = nn.Linear(DENSE_2, NUM_CLASSI)
 
     def forward(self, x):
+        # Passaggio nei blocchi LSTM
         x, _ = self.lstm1(x)
         x = self.dropout1(x)
         
@@ -126,9 +147,7 @@ class LSTMClassificatore(nn.Module):
 
 
 def main():
-    # ==========================================
-    # BLOCCO 1: Caricamento dati e setup
-    # ==========================================
+    # CARICAMENTO DATI
     print("Caricamento Train Set...")
     X_train, y_train = carica_dataset("train")
 
@@ -154,16 +173,15 @@ def main():
     criterio_loss = nn.CrossEntropyLoss()
     ottimizzatore = optim.Adam(modello.parameters(), lr=LEARNING_RATE)
 
-    # ==========================================
-    # BLOCCO 2 + 3: Training loop con early stopping
-    # ==========================================
-    # Liste per salvare i valori di ogni epoca (servono per i grafici alla fine)
+
+    # TRAINING
+    # Liste per salvare i valori di ogni epoca per i grafici alla fine
     storico_loss_train = []
     storico_loss_val = []
     storico_accuracy_val = []
 
     # Variabili per l'early stopping
-    miglior_val_loss = float('inf')  # Parte da infinito, così qualsiasi loss è migliore
+    miglior_val_loss = float('inf')  # Parte da infinito
     contatore_pazienza = 0
 
     # Crea la cartella per salvare il modello
@@ -176,36 +194,36 @@ def main():
 
     for epoca in range(EPOCHE):
 
-        # --- FASE TRAIN ---
-        modello.train()  # Attiva dropout e batch norm (modalità addestramento)
+        # FASE TRAINING
+        modello.train()
         perdita_totale_train = 0.0
 
         for X_batch, y_batch in loader_train:
-            # Sposta i dati sullo stesso dispositivo del modello (GPU/MPS/CPU)
+            # Sposta i dati sullo stesso dispositivo
             X_batch = X_batch.to(dispositivo)
             y_batch = y_batch.to(dispositivo)
 
-            # Forward pass: i dati passano attraverso la rete
+            # I dati passano attraverso la rete
             predizioni = modello(X_batch)
             loss = criterio_loss(predizioni, y_batch)
 
-            # Backward pass: calcola i gradienti e aggiorna i pesi
-            ottimizzatore.zero_grad()  # Azzera i gradienti dell'iterazione precedente
-            loss.backward()            # Calcola i nuovi gradienti (backpropagation)
-            ottimizzatore.step()       # Aggiorna i pesi della rete
+            # Calcola i gradienti e aggiorna i pesi
+            ottimizzatore.zero_grad()
+            loss.backward()
+            ottimizzatore.step()
 
             perdita_totale_train += loss.item()
 
-        # Media della loss su tutti i batch del train
+        # Media della loss
         loss_media_train = perdita_totale_train / len(loader_train)
 
-        # --- FASE VALIDAZIONE ---
-        modello.eval()  # Disattiva dropout (modalità valutazione)
+        # FASE VALIDAZIONE
+        modello.eval()
         perdita_totale_val = 0.0
         corrette = 0
         totali = 0
 
-        with torch.no_grad():  # Non calcolare gradienti (risparmia memoria)
+        with torch.no_grad():
             for X_batch, y_batch in loader_val:
                 X_batch = X_batch.to(dispositivo)
                 y_batch = y_batch.to(dispositivo)
@@ -214,8 +232,7 @@ def main():
                 loss = criterio_loss(predizioni, y_batch)
                 perdita_totale_val += loss.item()
 
-                # Conta le predizioni corrette per calcolare l'accuracy
-                # .argmax(1) prende l'indice della classe con il valore più alto
+                # Conta le predizioni per calcolare l'accuracy
                 classi_predette = predizioni.argmax(1)
                 corrette += (classi_predette == y_batch).sum().item()
                 totali += y_batch.size(0)
@@ -228,21 +245,18 @@ def main():
         storico_loss_val.append(loss_media_val)
         storico_accuracy_val.append(accuracy_val)
 
-        # Stampa il progresso
         print(f"Epoca [{epoca+1:3d}/{EPOCHE}]  "
               f"Train Loss: {loss_media_train:.4f}  "
               f"Val Loss: {loss_media_val:.4f}  "
               f"Val Accuracy: {accuracy_val:.4f}")
 
-        # --- EARLY STOPPING ---
+        # EARLY STOPPING
         if loss_media_val < miglior_val_loss:
-            # La val_loss è migliorata → salva il modello e resetta il contatore
             miglior_val_loss = loss_media_val
             contatore_pazienza = 0
             torch.save(modello.state_dict(), percorso_modello)
             print(f"  ✓ Modello salvato (miglior val_loss: {miglior_val_loss:.4f})")
         else:
-            # La val_loss NON è migliorata → incrementa il contatore
             contatore_pazienza += 1
             print(f"  ✗ Nessun miglioramento ({contatore_pazienza}/{PAZIENZA})")
             if contatore_pazienza >= PAZIENZA:
@@ -254,10 +268,9 @@ def main():
     print(f" Modello salvato in: {percorso_modello}")
     print(f"{'='*60}")
 
-    # ==========================================
-    # BLOCCO 4: Valutazione finale e metriche
-    # ==========================================
-    # Carica il modello migliore (quello salvato durante il training)
+    
+    # VALUTAZIONI FINALI E METRICHE
+    # Carica il modello migliore
     modello.load_state_dict(torch.load(percorso_modello, map_location=dispositivo))
     modello.eval()
 
@@ -288,9 +301,8 @@ def main():
     print("Matrice di confusione:")
     print(cm)
 
-    # ==========================================
+
     # GRAFICI
-    # ==========================================
     os.makedirs("grafici", exist_ok=True)
     epoche_range = range(1, len(storico_loss_train) + 1)
 
