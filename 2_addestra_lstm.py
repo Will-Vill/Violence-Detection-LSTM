@@ -8,6 +8,19 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, classification_report
+import random
+
+# Fissa il seed per rendere l'addestramento deterministico e riproducibile
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(SEED)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+if torch.backends.mps.is_available():
+    torch.mps.manual_seed(SEED)
 
 # Seleziona hardware
 dispositivo = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
