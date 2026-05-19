@@ -32,7 +32,7 @@ CARTELLA_MODELLI = "modelli"
 # Costanti e iperparametri della rete
 FINESTRA = 30
 STRIDE = 15
-NUM_FEATURES = 34
+NUM_FEATURES = 68  # 34 coordinate + 34 velocità
 HIDDEN_1 = 128
 HIDDEN_2 = 64
 DENSE_1 = 32
@@ -48,6 +48,7 @@ PAZIENZA = 10
 def crea_sequenze_da_csv(percorso_csv):
     """
     Legge un file CSV contenente i keypoints estratti.
+    Calcola la velocità (spostamento tra frame consecutivi).
     Applica una sliding window per dividere i dati in sequenze temporali
     per ID.
     """
@@ -58,8 +59,19 @@ def crea_sequenze_da_csv(percorso_csv):
     for id_persona, dati_persona in df.groupby('id_persona'):
         coordinate = dati_persona.iloc[:, 2:].values
 
-        for i in range(0, len(coordinate) - FINESTRA + 1, STRIDE):
-            fetta_video = coordinate[i : i + FINESTRA]
+        if len(coordinate) < 2:
+            continue
+
+        # Calcolo della velocità: differenza tra frame consecutivi
+        # Per il primo frame la velocità è zero
+        velocita = np.diff(coordinate, axis=0)
+        velocita = np.vstack([np.zeros((1, coordinate.shape[1])), velocita])
+
+        # Concatena coordinate e velocità: 34 + 34 = 68 features
+        features = np.hstack([coordinate, velocita])
+
+        for i in range(0, len(features) - FINESTRA + 1, STRIDE):
+            fetta_video = features[i : i + FINESTRA]
             sequenze_video.append(fetta_video)
 
     return sequenze_video
