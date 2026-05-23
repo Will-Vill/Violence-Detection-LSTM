@@ -32,14 +32,14 @@ CARTELLA_MODELLI = "modelli"
 # Costanti e iperparametri della rete
 FINESTRA = 30
 STRIDE = 15
-NUM_FEATURES = 68  # 34 coordinate + 34 velocità
-HIDDEN_1 = 128
-HIDDEN_2 = 64
-DENSE_1 = 32
-DENSE_2 = 16
-DROPOUT = 0.3
+NUM_FEATURES = 69  # 34 coordinate + 34 velocità + 1 distanza
+HIDDEN_1 = 64
+HIDDEN_2 = 32
+DENSE_1 = 16
+DENSE_2 = 8
+DROPOUT = 0.6
 NUM_CLASSI = 2
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.0005
 BATCH_SIZE = 32
 EPOCHE = 50
 PAZIENZA = 10
@@ -48,7 +48,8 @@ PAZIENZA = 10
 def crea_sequenze_da_csv(percorso_csv):
     """
     Legge un file CSV contenente i keypoints estratti.
-    Calcola la velocità (spostamento tra frame consecutivi).
+    Calcola la velocità (spostamento tra frame consecutivi) e la distanza
+    dalla persona più vicina nello stesso frame.
     Applica una sliding window per dividere i dati in sequenze temporali
     per ID.
     """
@@ -56,8 +57,26 @@ def crea_sequenze_da_csv(percorso_csv):
     
     sequenze_video = []
 
+    # --- PASSO 1: Pre-calcolo del centro di massa di ogni persona per frame ---
+    # Per ogni frame del video, calcoliamo la posizione media (centro) di
+    # ogni persona presente. Questo serve dopo per calcolare le distanze.
+    centri_per_frame = {}
+
+    for frame_num, dati_frame in df.groupby('frame'):
+        centri = {}
+        for _, riga in dati_frame.iterrows():
+            pid = int(riga['id_persona'])
+            coords = riga.iloc[2:].values.astype(float)
+            # Il centro è la media di tutte le coordinate x e y
+            x_coords = coords[0::2]  # posizioni pari = valori x
+            y_coords = coords[1::2]  # posizioni dispari = valori y
+            centri[pid] = np.array([np.mean(x_coords), np.mean(y_coords)])
+        centri_per_frame[frame_num] = centri
+
+    # --- PASSO 2: Per ogni persona, costruisci le sequenze ---
     for id_persona, dati_persona in df.groupby('id_persona'):
         coordinate = dati_persona.iloc[:, 2:].values
+        lista_frame = dati_persona['frame'].values
 
         if len(coordinate) < 2:
             continue
@@ -67,8 +86,35 @@ def crea_sequenze_da_csv(percorso_csv):
         velocita = np.diff(coordinate, axis=0)
         velocita = np.vstack([np.zeros((1, coordinate.shape[1])), velocita])
 
-        # Concatena coordinate e velocità: 34 + 34 = 68 features
-        features = np.hstack([coordinate, velocita])
+        # --- PASSO 3: Calcolo distanza dal vicino più prossimo ---
+        # Per ogni frame di questa persona, cerchiamo l'altra persona
+        # più vicina e calcoliamo la distanza euclidea tra i loro centri.
+        # Se la persona è sola nel frame, la distanza è 1.0 (lontano).
+        distanze = []
+
+        for frame_num in lista_frame:
+            centri = centri_per_frame.get(frame_num, {})
+
+            if len(centri) < 2:
+                # Solo questa persona nel frame, nessun vicino
+                distanze.append(1.0)
+            else:
+                # Cerca la persona più vicina
+                centro_persona = centri[id_persona]
+                min_dist = float('inf')
+
+                for altro_id, altro_centro in centri.items():
+                    if altro_id != id_persona:
+                        dist = np.sqrt(np.sum((centro_persona - altro_centro) ** 2))
+                        if dist < min_dist:
+                            min_dist = dist
+
+                distanze.append(min_dist)
+
+        distanze = np.array(distanze).reshape(-1, 1)
+
+        # Concatena tutto: coordinate(34) + velocità(34) + distanza(1) = 69
+        features = np.hstack([coordinate, velocita, distanze])
 
         for i in range(0, len(features) - FINESTRA + 1, STRIDE):
             fetta_video = features[i : i + FINESTRA]
