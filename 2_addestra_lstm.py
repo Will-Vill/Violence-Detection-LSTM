@@ -39,7 +39,7 @@ DENSE_1 = 32
 DENSE_2 = 16
 DROPOUT = 0.3
 NUM_CLASSI = 2
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.0003
 BATCH_SIZE = 32
 EPOCHE = 50
 PAZIENZA = 10
@@ -241,7 +241,25 @@ def main():
     loader_val = DataLoader(dataset_val, batch_size=BATCH_SIZE, shuffle=False)
 
     modello = LSTMClassificatore().to(dispositivo)
-    criterio_loss = nn.CrossEntropyLoss()
+
+    # --- BILANCIAMENTO DELLE CLASSI DINAMICO ---
+    # Contiamo quante sequenze ci sono per classe nel set di addestramento
+    num_no_fight = np.sum(y_train == 0)
+    num_fight = np.sum(y_train == 1)
+    totale = num_no_fight + num_fight
+
+    # Calcoliamo i pesi (chi ha meno dati ha un peso maggiore)
+    peso_no_fight = totale / num_no_fight
+    peso_fight = totale / num_fight
+
+    # Creiamo il tensore per PyTorch
+    pesi_classi = torch.tensor([peso_no_fight, peso_fight], dtype=torch.float32).to(dispositivo)
+
+    # Passiamo i pesi alla funzione di Loss
+    criterio_loss = nn.CrossEntropyLoss(weight=pesi_classi)
+    # -------------------------------------------
+
+
     ottimizzatore = optim.Adam(modello.parameters(), lr=LEARNING_RATE)
 
 
