@@ -7,8 +7,8 @@ random.seed(42)
 
 # --- INSERISCI QUI I PERCORSI DEL NUOVO DATASET SCARICATO ---
 # Esempio: dove si trovano attualmente le cartelle "Violence" e "NonViolence"
-CARTELLA_SORGENTE_VIOLENCE = "/home/williamvil/Scaricati/archive/Real Life Violence Dataset//Violence"
-CARTELLA_SORGENTE_NONVIOLENCE = "/home/williamvil/Scaricati/archive/Real Life Violence Dataset//NonViolence"
+CARTELLA_SORGENTE_VIOLENCE = "/home/williamvil/Scaricati/Real Life Violence Dataset//Violence"
+CARTELLA_SORGENTE_NONVIOLENCE = "/home/williamvil/Scaricati/Real Life Violence Dataset//NonViolence"
 
 # --- LA TUA CARTELLA DI DESTINAZIONE (quella letta dal tuo script 1) ---
 CARTELLA_DESTINAZIONE = "datasets"
