@@ -1,0 +1,95 @@
+X_train: (34816, 30, 69)  y_train: (34816,)
+X_val:   (10772, 30, 69)    y_val:   (10772,)
+Distribuzione train → fight: 20042, no_fight: 14774
+Distribuzione val   → fight: 6930, no_fight: 3842
+
+============================================================
+ Inizio addestramento — max 50 epoche
+============================================================
+
+Epoca [  1/50]  Train Loss: 0.6248  Val Loss: 0.5966  Val Accuracy: 0.6982
+  ✓ Modello salvato (miglior val_loss: 0.5966)
+Epoca [  2/50]  Train Loss: 0.5875  Val Loss: 0.5434  Val Accuracy: 0.7382
+  ✓ Modello salvato (miglior val_loss: 0.5434)
+Epoca [  3/50]  Train Loss: 0.5828  Val Loss: 0.6090  Val Accuracy: 0.6939
+  ✗ Nessun miglioramento (1/10)
+Epoca [  4/50]  Train Loss: 0.6577  Val Loss: 0.6610  Val Accuracy: 0.6433
+  ✗ Nessun miglioramento (2/10)
+Epoca [  5/50]  Train Loss: 0.6521  Val Loss: 0.5554  Val Accuracy: 0.7236
+  ✗ Nessun miglioramento (3/10)
+Epoca [  6/50]  Train Loss: 0.5814  Val Loss: 0.5436  Val Accuracy: 0.7216
+  ✗ Nessun miglioramento (4/10)
+Epoca [  7/50]  Train Loss: 0.5514  Val Loss: 0.5290  Val Accuracy: 0.7424
+  ✓ Modello salvato (miglior val_loss: 0.5290)
+Epoca [  8/50]  Train Loss: 0.5289  Val Loss: 0.5105  Val Accuracy: 0.7477
+  ✓ Modello salvato (miglior val_loss: 0.5105)
+Epoca [  9/50]  Train Loss: 0.5135  Val Loss: 0.4992  Val Accuracy: 0.7608
+  ✓ Modello salvato (miglior val_loss: 0.4992)
+Epoca [ 10/50]  Train Loss: 0.5057  Val Loss: 0.4843  Val Accuracy: 0.7723
+  ✓ Modello salvato (miglior val_loss: 0.4843)
+Epoca [ 11/50]  Train Loss: 0.4914  Val Loss: 0.4600  Val Accuracy: 0.7792
+  ✓ Modello salvato (miglior val_loss: 0.4600)
+Epoca [ 12/50]  Train Loss: 0.4825  Val Loss: 0.4628  Val Accuracy: 0.7807
+  ✗ Nessun miglioramento (1/10)
+Epoca [ 13/50]  Train Loss: 0.4771  Val Loss: 0.4587  Val Accuracy: 0.7862
+  ✓ Modello salvato (miglior val_loss: 0.4587)
+Epoca [ 14/50]  Train Loss: 0.4732  Val Loss: 0.4526  Val Accuracy: 0.7901
+  ✓ Modello salvato (miglior val_loss: 0.4526)
+Epoca [ 15/50]  Train Loss: 0.4702  Val Loss: 0.4662  Val Accuracy: 0.7786
+  ✗ Nessun miglioramento (1/10)
+Epoca [ 16/50]  Train Loss: 0.4647  Val Loss: 0.4440  Val Accuracy: 0.7950
+  ✓ Modello salvato (miglior val_loss: 0.4440)
+Epoca [ 17/50]  Train Loss: 0.4644  Val Loss: 0.4486  Val Accuracy: 0.7923
+  ✗ Nessun miglioramento (1/10)
+Epoca [ 18/50]  Train Loss: 0.4593  Val Loss: 0.4493  Val Accuracy: 0.7931
+  ✗ Nessun miglioramento (2/10)
+Epoca [ 19/50]  Train Loss: 0.4559  Val Loss: 0.4611  Val Accuracy: 0.7794
+  ✗ Nessun miglioramento (3/10)
+Epoca [ 20/50]  Train Loss: 0.4513  Val Loss: 0.4566  Val Accuracy: 0.7899
+  ✗ Nessun miglioramento (4/10)
+Epoca [ 21/50]  Train Loss: 0.4489  Val Loss: 0.4451  Val Accuracy: 0.7980
+  ✗ Nessun miglioramento (5/10)
+Epoca [ 22/50]  Train Loss: 0.4461  Val Loss: 0.4482  Val Accuracy: 0.7934
+  ✗ Nessun miglioramento (6/10)
+Epoca [ 23/50]  Train Loss: 0.4458  Val Loss: 0.4550  Val Accuracy: 0.7926
+  ✗ Nessun miglioramento (7/10)
+Epoca [ 24/50]  Train Loss: 0.4387  Val Loss: 0.4560  Val Accuracy: 0.7906
+  ✗ Nessun miglioramento (8/10)
+Epoca [ 25/50]  Train Loss: 0.4350  Val Loss: 0.4489  Val Accuracy: 0.7966
+  ✗ Nessun miglioramento (9/10)
+Epoca [ 26/50]  Train Loss: 0.4314  Val Loss: 0.5488  Val Accuracy: 0.7162
+  ✗ Nessun miglioramento (10/10)
+
+⚠ Early stopping! La val_loss non migliora da 10 epoche.
+
+============================================================
+ Addestramento completato — 26 epoche
+ Modello salvato in: modello/lstm_risse.pt
+============================================================
+
+============================================================
+ METRICHE DI VALUTAZIONE
+============================================================
+
+              precision    recall  f1-score   support
+
+    no_fight       0.75      0.64      0.69      3842
+       fight       0.82      0.88      0.85      6930
+
+    accuracy                           0.80     10772
+   macro avg       0.78      0.76      0.77     10772
+weighted avg       0.79      0.80      0.79     10772
+
+Matrice di confusione:
+[[2466 1376]
+ [ 832 6098]]
+
+Grafico salvato: grafici/loss.png
+Grafico salvato: grafici/accuracy.png
+Grafico salvato: grafici/confusion_matrix.png
+
+============================================================
+ TUTTO COMPLETATO!
+ Modello:  modello/lstm_risse.pt
+ Grafici:  grafici/
+============================================================
