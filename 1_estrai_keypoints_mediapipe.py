@@ -4,37 +4,40 @@ import glob
 import cv2
 import time
 import numpy as np
-from ultralytics import YOLO
 import mediapipe as mp
+from mediapipe.tasks.python import vision, BaseOptions
 
 # CONFIGURAZIONE
-# YOLO viene usato SOLO per il rilevamento e il tracking delle persone
-# (bounding box + ID). La stima della posa è delegata a MediaPipe.
-MODELLO_DETECTION = "yolo26n-pose.pt"
+# Script di estrazione PURO MediaPipe — NESSUN uso di YOLO.
+# MediaPipe PoseLandmarker rileva le persone e stima la posa in un unico passaggio.
+# NOTA: MediaPipe NON ha un sistema di tracking degli ID tra frame,
+#       quindi gli ID vengono assegnati per posizione spaziale (da sinistra a destra).
+MODELLO_MP = "pose_landmarker.task"
 CARTELLA_DATASET = "datasets"
 CARTELLA_OUTPUT = "output_mediapipe"
+MAX_PERSONE = 5  # numero massimo di persone da rilevare per frame
 
 # Mapping da MediaPipe (33 landmark) → 17 keypoints COCO
 # Questo assicura che l'output CSV abbia lo stesso formato
 # dello script YOLO-Pose, così lo script 2 funziona senza modifiche.
 MAPPING_MP_A_COCO = [
-    0,   # 0  naso        → MP nose
-    2,   # 1  occhio_sx   → MP left_eye
-    5,   # 2  occhio_dx   → MP right_eye
-    7,   # 3  orecchio_sx → MP left_ear
-    8,   # 4  orecchio_dx → MP right_ear
-    11,  # 5  spalla_sx   → MP left_shoulder
-    12,  # 6  spalla_dx   → MP right_shoulder
-    13,  # 7  gomito_sx   → MP left_elbow
-    14,  # 8  gomito_dx   → MP right_elbow
-    15,  # 9  polso_sx    → MP left_wrist
-    16,  # 10 polso_dx    → MP right_wrist
-    23,  # 11 anca_sx     → MP left_hip
-    24,  # 12 anca_dx     → MP right_hip
-    25,  # 13 ginocchio_sx→ MP left_knee
-    26,  # 14 ginocchio_dx→ MP right_knee
-    27,  # 15 caviglia_sx → MP left_ankle
-    28,  # 16 caviglia_dx → MP right_ankle
+    0,   # 0  naso
+    2,   # 1  occhio_sx
+    5,   # 2  occhio_dx
+    7,   # 3  orecchio_sx
+    8,   # 4  orecchio_dx
+    11,  # 5  spalla_sx
+    12,  # 6  spalla_dx
+    13,  # 7  gomito_sx
+    14,  # 8  gomito_dx
+    15,  # 9  polso_sx
+    16,  # 10 polso_dx
+    23,  # 11 anca_sx
+    24,  # 12 anca_dx
+    25,  # 13 ginocchio_sx
+    26,  # 14 ginocchio_dx
+    27,  # 15 caviglia_sx
+    28,  # 16 caviglia_dx
 ]
 
 NOMI_KP = [
@@ -44,19 +47,32 @@ NOMI_KP = [
 ]
 
 
-def estrazione_video_csv(modello_yolo, pose_mp, percorso_video, percorso_csv):
+def calcola_centro(landmarks):
     """
-    Estrae i keypoints da un video usando MediaPipe per la posa.
-    YOLO viene usato solo per rilevare e tracciare le persone (bounding box + ID).
-    Per ogni persona rilevata, il ritaglio viene passato a MediaPipe Pose
-    che stima i 33 landmark, poi mappati ai 17 keypoints COCO.
+    Calcola il centro di una persona come media delle coordinate
+    dell'anca sinistra (indice 23) e destra (indice 24) di MediaPipe.
+    Serve per ordinare le persone spazialmente da sinistra a destra,
+    simulando un rudimentale sistema di tracking per posizione.
+    """
+    anca_sx = landmarks[23]
+    anca_dx = landmarks[24]
+    centro_x = (anca_sx.x + anca_dx.x) / 2
+    centro_y = (anca_sx.y + anca_dx.y) / 2
+    return centro_x, centro_y
+
+
+def estrazione_video_csv(detector, percorso_video, percorso_csv):
+    """
+    Estrae i keypoints da un video usando SOLO MediaPipe.
+    Per ogni frame, MediaPipe rileva fino a MAX_PERSONE persone.
+    Poiché MediaPipe non ha tracking, gli ID vengono assegnati
+    ordinando le persone da sinistra a destra in base alla posizione
+    del centro del corpo. Questo garantisce una certa coerenza
+    temporale degli ID ma non è affidabile come il tracking di YOLO.
     """
     video = cv2.VideoCapture(percorso_video)
     if not video.isOpened():
         return 0
-
-    frame_w = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_h = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     header = ["frame", "id_persona"]
     for kp in NOMI_KP:
@@ -74,56 +90,37 @@ def estrazione_video_csv(modello_yolo, pose_mp, percorso_video, percorso_csv):
             if not ok:
                 break
 
-            # --- PASSO 1: YOLO rileva e traccia le persone ---
-            risultati = modello_yolo.track(frame, persist=True, verbose=False, device=0)
-            r = risultati[0]
+            # Converti BGR (OpenCV) → RGB (MediaPipe)
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            if r.boxes is not None and r.boxes.id is not None:
-                boxes = r.boxes.xyxy.cpu().numpy()      # [x1, y1, x2, y2]
-                id_persone = r.boxes.id.cpu().numpy().astype(int)
+            # Crea un oggetto Image di MediaPipe
+            mp_image = mp.Image(
+                image_format=mp.ImageFormat.SRGB,
+                data=frame_rgb
+            )
 
-                for i, pid in enumerate(id_persone):
-                    x1, y1, x2, y2 = boxes[i].astype(int)
+            # Rileva le pose nel frame
+            risultato = detector.detect(mp_image)
 
-                    # Limita le coordinate ai bordi del frame
-                    x1 = max(0, x1)
-                    y1 = max(0, y1)
-                    x2 = min(frame_w, x2)
-                    y2 = min(frame_h, y2)
+            if risultato.pose_landmarks:
+                # Ordina le persone da sinistra a destra per il centro del corpo
+                # Questo simula un tracking rudimentale basato sulla posizione
+                persone_con_centro = []
+                for landmarks in risultato.pose_landmarks:
+                    centro_x, _ = calcola_centro(landmarks)
+                    persone_con_centro.append((centro_x, landmarks))
 
-                    crop_w = x2 - x1
-                    crop_h = y2 - y1
+                persone_con_centro.sort(key=lambda p: p[0])
 
-                    # Salta ritagli troppo piccoli
-                    if crop_w < 20 or crop_h < 20:
-                        continue
-
-                    # --- PASSO 2: Ritaglia la persona e passa a MediaPipe ---
-                    ritaglio = frame[y1:y2, x1:x2]
-                    ritaglio_rgb = cv2.cvtColor(ritaglio, cv2.COLOR_BGR2RGB)
-
-                    risultato_mp = pose_mp.process(ritaglio_rgb)
-
+                for pid, (_, landmarks) in enumerate(persone_con_centro, start=1):
                     riga = [contatore_frame, pid]
 
-                    if risultato_mp.pose_landmarks:
-                        landmarks = risultato_mp.pose_landmarks.landmark
-
-                        for indice_coco in range(17):
-                            indice_mp = MAPPING_MP_A_COCO[indice_coco]
-                            lm = landmarks[indice_mp]
-
-                            # Converti da coordinate relative al ritaglio
-                            # a coordinate normalizzate rispetto al frame intero
-                            x_frame = (x1 + lm.x * crop_w) / frame_w
-                            y_frame = (y1 + lm.y * crop_h) / frame_h
-                            riga.append(round(x_frame, 4))
-                            riga.append(round(y_frame, 4))
-                    else:
-                        # MediaPipe non ha trovato la posa: scrivi zeri
-                        for _ in range(17):
-                            riga.append(0.0)
-                            riga.append(0.0)
+                    for indice_coco in range(17):
+                        indice_mp = MAPPING_MP_A_COCO[indice_coco]
+                        lm = landmarks[indice_mp]
+                        # Le coordinate di MediaPipe sono già normalizzate (0-1)
+                        riga.append(round(lm.x, 4))
+                        riga.append(round(lm.y, 4))
 
                     writer.writerow(riga)
 
@@ -138,29 +135,26 @@ def main():
     splits = ["train", "val"]
     categorie = ["fight", "no_fight"]
 
-    # Crea le cartelle di input e output
+    # Crea le cartelle di output
     for split in splits:
         for categoria in categorie:
             os.makedirs(os.path.join(CARTELLA_DATASET, split, categoria), exist_ok=True)
             os.makedirs(os.path.join(CARTELLA_OUTPUT, split, categoria), exist_ok=True)
 
-    # Carica YOLO solo per il rilevamento e tracking delle persone
-    modello_yolo = YOLO(MODELLO_DETECTION)
-
-    # Inizializza MediaPipe Pose
-    # static_image_mode=True perché ogni ritaglio è indipendente
-    # model_complexity=1 per un buon compromesso precisione/velocità
-    pose_mp = mp.solutions.pose.Pose(
-        static_image_mode=True,
-        model_complexity=1,
-        min_detection_confidence=0.5
+    # Inizializza MediaPipe PoseLandmarker
+    options = vision.PoseLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=MODELLO_MP),
+        num_poses=MAX_PERSONE,
+        min_pose_detection_confidence=0.5,
+        min_pose_presence_confidence=0.5,
     )
+    detector = vision.PoseLandmarker.create_from_options(options)
 
     numero_video_totali = 0
 
     for split in splits:
         print(f"\n{'='*50}")
-        print(f" Split: {split.upper()} — Estrazione con MediaPipe")
+        print(f" Split: {split.upper()} — Estrazione con MediaPipe (puro)")
         print(f"{'='*50}")
 
         for categoria in categorie:
@@ -183,7 +177,7 @@ def main():
                 nome_csv = os.path.splitext(nome_file)[0] + ".csv"
                 percorso_csv = os.path.join(CARTELLA_OUTPUT, split, categoria, nome_csv)
 
-                numero_frame = estrazione_video_csv(modello_yolo, pose_mp, percorso_video, percorso_csv)
+                numero_frame = estrazione_video_csv(detector, percorso_video, percorso_csv)
 
                 if numero_frame > 0:
                     print(f"Successo: {numero_frame} frame | {time.time()-tempo_inizio:.1f}s")
@@ -192,7 +186,7 @@ def main():
 
                 numero_video_totali += 1
 
-    pose_mp.close()
+    detector.close()
 
     print(f"\n{'='*50}")
     print(f" Video processati: {numero_video_totali}")
