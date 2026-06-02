@@ -1,56 +1,49 @@
-import os
-# Fix per Wayland su Linux (stesso di MediaPipe)
-os.environ["QT_QPA_PLATFORM"] = "xcb"
-
 import cv2
 from ultralytics import YOLO
 
-# --- CONFIGURAZIONE ---
-# Usa lo stesso identico video che hai usato per MediaPipe
-PERCORSO_VIDEO = "datasets/train/fight/RealLife_V_1.mp4" 
-
-# Usa il modello YOLO-Pose che hai addestrato/scaricato
-# Assicurati che il nome del file sia corretto (quello che hai nella cartella)
-MODELLO_YOLO = "yolo26n-pose.pt" 
+PERCORSO_VIDEO = "/Users/williamvil/Desktop/Tesi/AI_Tesi/file .md/RealLife_NV_1.mp4"
+MODELLO_YOLO = "yolo26n-pose.pt"
 
 def main():
-    print(f"Caricamento modello {MODELLO_YOLO}...")
-    
-    # Inizializza il modello YOLO
     modello = YOLO(MODELLO_YOLO)
 
     cap = cv2.VideoCapture(PERCORSO_VIDEO)
-    
+
     if not cap.isOpened():
-        print(f"ERRORE: Impossibile aprire il video {PERCORSO_VIDEO}")
+        print("Errore apertura video")
         return
 
-    print("Premi 'q' per chiudere il video.")
+    paused = False
+    saved = False
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+    print("p = pausa | s = salva frame | q = esci")
 
-        # LA MAGIA DI YOLO È QUI:
-        # persist=True attiva il Tracker interno (ByteTrack/BoT-SORT)
-        # tracker="botsort.yaml" (opzionale, ma di default usa algoritmi avanzatissimi)
-        risultati = modello.track(frame, persist=True, verbose=False)
+    while True:
+        if not paused:
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-        # Prendi il risultato del primo (e unico) frame processato
-        r = risultati[0]
+            risultati = modello.track(frame, persist=True, verbose=False)
+            r = risultati[0]
+            frame_disegnato = r.plot()
 
-        # YOLO ha una funzione nativa '.plot()' che disegna automaticamente:
-        # 1. Il Bounding Box (rettangolo)
-        # 2. Lo scheletro (17 keypoints)
-        # 3. L'ID del tracker sopra il rettangolo (es. '1', '2')
-        frame_disegnato = r.plot()
+            current_frame = frame.copy()
+            current_drawn = frame_disegnato.copy()
 
-        # Mostra il frame a schermo
-        cv2.imshow("Test Tracciamento YOLO-Pose (Detection + Tracking)", frame_disegnato)
+        cv2.imshow("YOLO-Pose", current_drawn)
 
-        # Ritardo di 30 millisecondi per visualizzarlo a velocità normale
-        if cv2.waitKey(30) & 0xFF == ord('q'):
+        key = cv2.waitKey(1) & 0xFF
+
+        if key == ord('p'):
+            paused = not paused  # freeze/unfreeze
+
+        elif key == ord('s'):
+            cv2.imwrite("frame_originale.png", current_frame)
+            cv2.imwrite("frame_yolo.png", current_drawn)
+            print("Frame salvati!")
+
+        elif key == ord('q'):
             break
 
     cap.release()
