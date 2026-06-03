@@ -33,7 +33,7 @@ CARTELLA_MODELLI = "modello"
 # Costanti e iperparametri — IDENTICI al modello base
 FINESTRA = 30
 STRIDE = 15
-NUM_FEATURES = 69  # 34 coordinate + 34 velocità + 1 distanza
+NUM_FEATURES = 104  # 34 coordinate + 34 velocità + 1 distanza
 HIDDEN_1 = 128
 HIDDEN_2 = 64
 DENSE_1 = 32
@@ -51,16 +51,10 @@ PAZIENZA = 10
 # ══════════════════════════════════════════════════════════════════════
 
 def crea_sequenze_da_csv(percorso_csv, categoria):
-    """
-    Identico al modello base, con UNA sola aggiunta:
-    nei video FIGHT, scarta le persone con velocità bassa
-    (probabili spettatori). Nei video NO-FIGHT, tiene tutti.
-    """
     df = pd.read_csv(percorso_csv)
-
     sequenze_video = []
 
-    # --- PASSO 1: Centro di massa per il calcolo distanze (identico al base) ---
+    # --- PASSO 1: Centro di massa per il calcolo distanze ---
     centri_per_frame = {}
     for frame_num, dati_frame in df.groupby('frame'):
         centri = {}
@@ -72,10 +66,7 @@ def crea_sequenze_da_csv(percorso_csv, categoria):
             centri[pid] = np.array([np.mean(x_coords), np.mean(y_coords)])
         centri_per_frame[frame_num] = centri
 
-    # --- FILTRO SPETTATORI (solo per video FIGHT) ---
-    # Per ogni persona calcola la velocità media.
-    # Nei video fight, tiene solo le persone con velocità sopra la mediana.
-    # Questo rimuove gli spettatori fermi che venivano etichettati "fight".
+    # --- FILTRO SPETTATORI (Solo nei video Fight) ---
     persone_da_tenere = set(df['id_persona'].unique())
 
     if categoria == "fight":
@@ -85,45 +76,46 @@ def crea_sequenze_da_csv(percorso_csv, categoria):
             if len(coords) < 2:
                 velocita_per_persona[id_persona] = 0.0
                 continue
-            # Velocità media = media degli spostamenti frame-to-frame
             diff = np.diff(coords, axis=0)
             vel_media = np.mean(np.abs(diff))
             velocita_per_persona[id_persona] = vel_media
 
         if len(velocita_per_persona) > 2:
-            # Calcola la mediana delle velocità
             valori_vel = list(velocita_per_persona.values())
             mediana_vel = np.median(valori_vel)
-
-            # Tieni solo chi si muove sopra la mediana (i più attivi)
-            persone_da_tenere = set()
-            for pid, vel in velocita_per_persona.items():
-                if vel >= mediana_vel:
-                    persone_da_tenere.add(pid)
-
-            # Tieni almeno 2 persone (le più veloci)
+            persone_da_tenere = {pid for pid, vel in velocita_per_persona.items() if vel >= mediana_vel}
             if len(persone_da_tenere) < 2:
-                top2 = sorted(velocita_per_persona.keys(),
-                              key=lambda p: velocita_per_persona[p], reverse=True)[:2]
+                top2 = sorted(velocita_per_persona.keys(), key=lambda p: velocita_per_persona[p], reverse=True)[:2]
                 persone_da_tenere = set(top2)
 
-    # --- PASSO 2: Per ogni persona FILTRATA, costruisci le sequenze ---
+    # --- PASSO 2: Feature Engineering Potenziato ---
     for id_persona, dati_persona in df.groupby('id_persona'):
-        # Salta le persone filtrate (spettatori nei video fight)
         if id_persona not in persone_da_tenere:
             continue
 
         coordinate = dati_persona.iloc[:, 2:].values
         lista_frame = dati_persona['frame'].values
 
-        if len(coordinate) < 2:
+        if len(coordinate) < 3: # Serve almeno lunghezza 3 per l'accelerazione
             continue
 
-        # Calcolo velocità (identico al base)
+        # 1. VELOCITÀ E ACCELERAZIONE (Basate sulle coordinate assolute)
         velocita = np.diff(coordinate, axis=0)
         velocita = np.vstack([np.zeros((1, coordinate.shape[1])), velocita])
+        
+        accelerazione = np.diff(velocita, axis=0)
+        accelerazione = np.vstack([np.zeros((1, velocita.shape[1])), accelerazione])
 
-        # Calcolo distanza dal vicino più prossimo (identico al base)
+        # 2. CENTRATURA DELLO SCHELETRO (Invarianza Traslazionale)
+        # Sottraiamo il centro di massa della persona alle sue stesse coordinate
+        centri_x = np.mean(coordinate[:, 0::2], axis=1, keepdims=True)
+        centri_y = np.mean(coordinate[:, 1::2], axis=1, keepdims=True)
+        
+        coord_centrate = coordinate.copy()
+        coord_centrate[:, 0::2] = coordinate[:, 0::2] - centri_x
+        coord_centrate[:, 1::2] = coordinate[:, 1::2] - centri_y
+
+        # 3. DISTANZA RELAZIONALE
         distanze = []
         for frame_num in lista_frame:
             centri = centri_per_frame.get(frame_num, {})
@@ -141,10 +133,14 @@ def crea_sequenze_da_csv(percorso_csv, categoria):
 
         distanze = np.array(distanze).reshape(-1, 1)
 
-        # Concatena: coordinate(34) + velocità(34) + distanza(1) = 69
-        features = np.hstack([coordinate, velocita, distanze])
+        # 4. DELTA DISTANZA (Si stanno avvicinando o allontanando?)
+        delta_dist = np.diff(distanze, axis=0)
+        delta_dist = np.vstack([np.zeros((1, 1)), delta_dist])
 
-        # Sliding window (identico al base)
+        # Concatena tutto: coord_centrate(34) + vel(34) + acc(34) + dist(1) + delta_dist(1) = 104
+        features = np.hstack([coord_centrate, velocita, accelerazione, distanze, delta_dist])
+
+        # Sliding window
         for i in range(0, len(features) - FINESTRA + 1, STRIDE):
             fetta_video = features[i : i + FINESTRA]
             sequenze_video.append(fetta_video)
@@ -197,11 +193,11 @@ class LSTMClassificatore(nn.Module):
     """
     def __init__(self):
         super(LSTMClassificatore, self).__init__()
-        self.lstm1 = nn.LSTM(input_size=NUM_FEATURES, hidden_size=HIDDEN_1, batch_first=True, bidirectional=True)
+        self.lstm1 = nn.LSTM(input_size=NUM_FEATURES, hidden_size=HIDDEN_1, batch_first=True)
         self.dropout1 = nn.Dropout(DROPOUT)
-        self.lstm2 = nn.LSTM(input_size=HIDDEN_1 * 2, hidden_size=HIDDEN_2, batch_first=True, bidirectional=True)
+        self.lstm2 = nn.LSTM(input_size=HIDDEN_1, hidden_size=HIDDEN_2, batch_first=True)
         self.dropout2 = nn.Dropout(DROPOUT)
-        self.fc1 = nn.Linear(HIDDEN_2 * 2, DENSE_1)
+        self.fc1 = nn.Linear(HIDDEN_2, DENSE_1)
         self.dropout3 = nn.Dropout(DROPOUT)
         self.fc2 = nn.Linear(DENSE_1, DENSE_2)
         self.dropout4 = nn.Dropout(DROPOUT)
