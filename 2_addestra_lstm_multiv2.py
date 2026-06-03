@@ -8,6 +8,8 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.preprocessing import StandardScaler
+from collections import defaultdict
 import random
 
 # Fissa il seed per rendere l'addestramento deterministico e riproducibile
@@ -31,7 +33,7 @@ CARTELLA_MODELLI = "modelli"
 
 # Costanti e iperparametri della rete
 FINESTRA = 30
-STRIDE = 15
+STRIDE = 5
 
 # FEATURES MULTI-PERSONA (per frame):
 #   Persona A (la più vicina):  34 coordinate + 34 velocità = 68
@@ -42,11 +44,11 @@ STRIDE = 15
 #   TOTALE:                     139
 NUM_FEATURES = 139
 
-HIDDEN_1 = 128
-HIDDEN_2 = 64
-DENSE_1 = 32
-DENSE_2 = 16
-DROPOUT = 0.3
+HIDDEN_1 = 64
+HIDDEN_2 = 32
+DENSE_1 = 16
+DENSE_2 = 8
+DROPOUT = 0.5
 NUM_CLASSI = 2
 LEARNING_RATE = 0.001
 BATCH_SIZE = 32
@@ -58,15 +60,22 @@ KP_SIZE = NUM_KP * 2  # 34 valori (17 keypoints x 2 coordinate)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# PREPARAZIONE DATI — VERSIONE MULTI-PERSONA
+# PREPARAZIONE DATI — VERSIONE MULTI-PERSONA v2
 # ══════════════════════════════════════════════════════════════════════
 
 def crea_sequenze_da_csv(percorso_csv):
     """
-    Versione multi-persona: per ogni frame del video, individua la coppia
-    di persone più vicine e costruisce un vettore di features congiunto.
-    Le sequenze vengono create per VIDEO (non per persona), eliminando
-    il rumore degli spettatori che affliggeva il modello base.
+    Versione multi-persona v2 con tracking consistente della coppia.
+
+    Migliorie rispetto alla v1:
+    1. Identifica la coppia dominante del video (quella che co-appare
+       più spesso e con distanza media minima) e la segue per tutta
+       la durata, eliminando il cambio di identità tra frame.
+    2. Forward-fill: quando una persona scompare temporaneamente,
+       mantiene le ultime coordinate note anziché riempire con zeri.
+       Così le velocità (np.diff) non hanno spike assurdi.
+    3. Le velocità risultano coerenti perché si segue sempre la stessa
+       coppia nel tempo.
 
     Struttura del vettore per frame (139 features):
         [coord_A(34), coord_B(34), vel_A(34), vel_B(34),
@@ -102,50 +111,99 @@ def crea_sequenze_da_csv(percorso_csv):
             centri[pid] = np.array([np.mean(x_coords), np.mean(y_coords)])
         dati_per_frame[frame_num] = (persone, centri)
 
-    # --- PASSO 2: Per ogni frame, trova la coppia più vicina ---
+    # --- PASSO 2: Identifica la coppia dominante del video ---
+    # Per ogni coppia (id_i, id_j) che co-appare nello stesso frame,
+    # conta le co-apparizioni e accumula la distanza tra i centri.
+    # La coppia dominante è quella con più co-apparizioni
+    # (tiebreak: distanza media minore = più vicini = più probabile rissa).
+    conteggio_coppie = defaultdict(int)
+    somma_distanze = defaultdict(float)
+
+    for frame_num in frame_range:
+        if frame_num not in dati_per_frame:
+            continue
+        persone, centri = dati_per_frame[frame_num]
+        ids = sorted(persone.keys())
+
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                coppia = (ids[i], ids[j])
+                dist = np.sqrt(np.sum((centri[ids[i]] - centri[ids[j]]) ** 2))
+                conteggio_coppie[coppia] += 1
+                somma_distanze[coppia] += dist
+
+    if len(conteggio_coppie) == 0:
+        # Nessuna coppia trovata (sempre 0 o 1 persona per frame).
+        # Usa la persona più frequente come A, B resterà forward-fill da zeri.
+        freq = defaultdict(int)
+        for frame_num in frame_range:
+            if frame_num in dati_per_frame:
+                persone, _ = dati_per_frame[frame_num]
+                for pid in persone:
+                    freq[pid] += 1
+        if not freq:
+            return []
+        id_A = max(freq, key=freq.get)
+        id_B = -999  # Sentinella: non sarà mai trovato in nessun frame
+    else:
+        # Scegli la coppia con più co-apparizioni (tiebreak: dist media minore)
+        migliore = max(
+            conteggio_coppie.keys(),
+            key=lambda c: (conteggio_coppie[c],
+                           -somma_distanze[c] / conteggio_coppie[c])
+        )
+        id_A, id_B = migliore
+
+    # --- PASSO 3: Estrai le coordinate della coppia dominante ---
+    # Forward-fill: quando una persona non è presente nel frame,
+    # si usano le ultime coordinate note (anziché zeri).
     lista_coord_A = []
     lista_coord_B = []
     lista_distanze = []
     lista_num_persone = []
 
+    ultimo_A = np.zeros(KP_SIZE)
+    ultimo_B = np.zeros(KP_SIZE)
+
     for frame_num in frame_range:
         if frame_num not in dati_per_frame:
-            # Frame senza nessuna persona rilevata (buco nel tracking)
-            lista_coord_A.append(np.zeros(KP_SIZE))
-            lista_coord_B.append(np.zeros(KP_SIZE))
-            lista_distanze.append(1.0)
+            # Frame vuoto (buco nel tracking): forward-fill entrambi
+            lista_coord_A.append(ultimo_A.copy())
+            lista_coord_B.append(ultimo_B.copy())
+            lista_distanze.append(lista_distanze[-1] if lista_distanze else 1.0)
             lista_num_persone.append(0)
             continue
 
         persone, centri = dati_per_frame[frame_num]
-        ids = list(persone.keys())
-        n_persone = len(ids)
+        n_persone = len(persone)
 
-        if n_persone == 1:
-            # Una sola persona: la seconda viene riempita con zeri
-            lista_coord_A.append(persone[ids[0]])
-            lista_coord_B.append(np.zeros(KP_SIZE))
-            lista_distanze.append(1.0)
-            lista_num_persone.append(1)
-
+        # Estrai persona A (forward-fill se assente)
+        if id_A in persone:
+            coord_a = persone[id_A]
+            ultimo_A = coord_a.copy()
         else:
-            # Due o più persone: trova la coppia con la distanza minima
-            min_dist = float('inf')
-            migliore_i = 0
-            migliore_j = 1
+            coord_a = ultimo_A.copy()
 
-            for i in range(len(ids)):
-                for j in range(i + 1, len(ids)):
-                    dist = np.sqrt(np.sum((centri[ids[i]] - centri[ids[j]]) ** 2))
-                    if dist < min_dist:
-                        min_dist = dist
-                        migliore_i = i
-                        migliore_j = j
+        # Estrai persona B (forward-fill se assente)
+        if id_B in persone:
+            coord_b = persone[id_B]
+            ultimo_B = coord_b.copy()
+        else:
+            coord_b = ultimo_B.copy()
 
-            lista_coord_A.append(persone[ids[migliore_i]])
-            lista_coord_B.append(persone[ids[migliore_j]])
-            lista_distanze.append(min_dist)
-            lista_num_persone.append(n_persone)
+        lista_coord_A.append(coord_a)
+        lista_coord_B.append(coord_b)
+
+        # Calcola la distanza tra i centri di A e B
+        if np.any(coord_a) and np.any(coord_b):
+            centro_a = np.array([np.mean(coord_a[0::2]), np.mean(coord_a[1::2])])
+            centro_b = np.array([np.mean(coord_b[0::2]), np.mean(coord_b[1::2])])
+            dist = np.sqrt(np.sum((centro_a - centro_b) ** 2))
+        else:
+            dist = 1.0
+
+        lista_distanze.append(dist)
+        lista_num_persone.append(n_persone)
 
     # Converti in array numpy
     coord_A = np.array(lista_coord_A)       # (T, 34)
@@ -156,7 +214,7 @@ def crea_sequenze_da_csv(percorso_csv):
     if len(coord_A) < 2:
         return []
 
-    # --- PASSO 3: Calcolo delle velocità ---
+    # --- PASSO 4: Calcolo delle velocità ---
     # Per il primo frame la velocità è zero
     vel_A = np.diff(coord_A, axis=0)
     vel_A = np.vstack([np.zeros((1, KP_SIZE)), vel_A])
@@ -164,13 +222,13 @@ def crea_sequenze_da_csv(percorso_csv):
     vel_B = np.diff(coord_B, axis=0)
     vel_B = np.vstack([np.zeros((1, KP_SIZE)), vel_B])
 
-    # --- PASSO 4: Variazione della distanza (delta) ---
+    # --- PASSO 5: Variazione della distanza (delta) ---
     # Negativo = le persone si avvicinano (indicatore di collisione)
     # Positivo = le persone si allontanano
     delta_dist = np.diff(distanze, axis=0)
     delta_dist = np.vstack([np.zeros((1, 1)), delta_dist])
 
-    # --- PASSO 5: Concatena tutto ---
+    # --- PASSO 6: Concatena tutto ---
     # coord_A(34) + coord_B(34) + vel_A(34) + vel_B(34) +
     # distanza(1) + delta_distanza(1) + num_persone(1) = 139
     features = np.hstack([
@@ -180,7 +238,7 @@ def crea_sequenze_da_csv(percorso_csv):
         num_persone
     ])
 
-    # --- PASSO 6: Sliding window per VIDEO ---
+    # --- PASSO 7: Sliding window per VIDEO ---
     # A differenza del modello base che creava finestre per PERSONA,
     # qui la finestra scorre sui frame del video. Ogni video genera
     # un numero limitato di sequenze, tutte con etichetta corretta.
@@ -303,6 +361,19 @@ def main():
     print(f"Distribuzione train → fight: {sum(y_train==1)}, no_fight: {sum(y_train==0)}")
     print(f"Distribuzione val   → fight: {sum(y_val==1)}, no_fight: {sum(y_val==0)}")
 
+    # ── NORMALIZZAZIONE FEATURES ──
+    # StandardScaler: fittato SOLO sul train, applicato a entrambi.
+    # Le features hanno scale molto diverse (coordinate 0-1, distanze 0-2+,
+    # num_persone 0-10+), normalizzarle aiuta la convergenza della rete.
+    scaler = StandardScaler()
+    n_train, seq_len, n_feat = X_train.shape
+    scaler.fit(X_train.reshape(-1, n_feat))
+
+    X_train = scaler.transform(X_train.reshape(-1, n_feat)).reshape(n_train, seq_len, n_feat)
+    n_val = X_val.shape[0]
+    X_val = scaler.transform(X_val.reshape(-1, n_feat)).reshape(n_val, seq_len, n_feat)
+    print("Features normalizzate con StandardScaler (fit su train)")
+
     dataset_train = FightDataset(X_train, y_train)
     dataset_val = FightDataset(X_val, y_val)
 
@@ -311,7 +382,8 @@ def main():
 
     modello = LSTMClassificatore().to(dispositivo)
 
-    criterio_loss = nn.CrossEntropyLoss()
+    pesi = torch.tensor([1.39, 1.0], dtype=torch.float32).to(dispositivo)
+    criterio_loss = nn.CrossEntropyLoss(weight=pesi)
 
     ottimizzatore = optim.Adam(modello.parameters(), lr=LEARNING_RATE)
 
@@ -328,10 +400,10 @@ def main():
 
     # Crea la cartella per salvare il modello
     os.makedirs(CARTELLA_MODELLI, exist_ok=True)
-    percorso_modello = os.path.join(CARTELLA_MODELLI, "lstm_risse_multi.pt")
+    percorso_modello = os.path.join(CARTELLA_MODELLI, "lstm_risse_multiv2.pt")
 
     print(f"\n{'='*60}")
-    print(f" Inizio addestramento MULTI-PERSONA — max {EPOCHE} epoche")
+    print(f" Inizio addestramento MULTI-PERSONA v2 — max {EPOCHE} epoche")
     print(f"{'='*60}\n")
 
     for epoca in range(EPOCHE):
@@ -455,13 +527,13 @@ def main():
     plt.plot(epoche_range, storico_loss_val, label="Val Loss", marker='o', markersize=3)
     plt.xlabel("Epoca")
     plt.ylabel("Loss")
-    plt.title("Andamento della Loss — Modello Multi-Persona")
+    plt.title("Andamento della Loss — Modello Multi-Persona v2")
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig("grafici/loss_multi.png", dpi=150)
+    plt.savefig("grafici/loss_multiv2.png", dpi=150)
     plt.close()
-    print("\nGrafico salvato: grafici/loss_multi.png")
+    print("\nGrafico salvato: grafici/loss_multiv2.png")
 
     # Grafico 2: Accuracy di validazione
     plt.figure(figsize=(10, 5))
@@ -469,13 +541,13 @@ def main():
              markersize=3, color='green')
     plt.xlabel("Epoca")
     plt.ylabel("Accuracy")
-    plt.title("Andamento dell'Accuracy — Modello Multi-Persona")
+    plt.title("Andamento dell'Accuracy — Modello Multi-Persona v2")
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig("grafici/accuracy_multi.png", dpi=150)
+    plt.savefig("grafici/accuracy_multiv2.png", dpi=150)
     plt.close()
-    print("Grafico salvato: grafici/accuracy_multi.png")
+    print("Grafico salvato: grafici/accuracy_multiv2.png")
 
     # Grafico 3: Matrice di confusione
     fig, ax = plt.subplots(figsize=(6, 5))
@@ -486,16 +558,16 @@ def main():
     ax.set_yticklabels(["no_fight", "fight"])
     ax.set_xlabel("Predetto")
     ax.set_ylabel("Reale")
-    ax.set_title("Matrice di Confusione — Multi-Persona")
+    ax.set_title("Matrice di Confusione — Multi-Persona v2")
     # Scrivi i numeri dentro le celle
     for i in range(2):
         for j in range(2):
             ax.text(j, i, str(cm[i, j]), ha='center', va='center', fontsize=20, fontweight='bold')
     plt.colorbar(im)
     plt.tight_layout()
-    plt.savefig("grafici/confusion_matrix_multi.png", dpi=150)
+    plt.savefig("grafici/confusion_matrix_multiv2.png", dpi=150)
     plt.close()
-    print("Grafico salvato: grafici/confusion_matrix_multi.png")
+    print("Grafico salvato: grafici/confusion_matrix_multiv2.png")
 
     print(f"\n{'='*60}")
     print(" TUTTO COMPLETATO!")
