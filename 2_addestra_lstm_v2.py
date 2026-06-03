@@ -27,7 +27,7 @@ if torch.backends.mps.is_available():
 dispositivo = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 print(f"Viene utilizzato il dispositivo: {dispositivo}")
 
-CARTELLA_INPUT = "output"
+CARTELLA_INPUT = "tipi_output_yolo/output_YOLOXX"
 CARTELLA_MODELLI = "modello"
 
 # Costanti e iperparametri — IDENTICI al modello base
@@ -265,7 +265,7 @@ def main():
 
     # ReduceLROnPlateau
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        ottimizzatore, mode='min', factor=0.5, patience=5, verbose=True
+        ottimizzatore, mode='min', factor=0.5, patience=5
     )
 
     # TRAINING
