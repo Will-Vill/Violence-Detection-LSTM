@@ -197,11 +197,11 @@ class LSTMClassificatore(nn.Module):
     """
     def __init__(self):
         super(LSTMClassificatore, self).__init__()
-        self.lstm1 = nn.LSTM(input_size=NUM_FEATURES, hidden_size=HIDDEN_1, batch_first=True, bidirectional=True)
+        self.lstm1 = nn.LSTM(input_size=NUM_FEATURES, hidden_size=HIDDEN_1, batch_first=True)
         self.dropout1 = nn.Dropout(DROPOUT)
-        self.lstm2 = nn.LSTM(input_size=HIDDEN_1 * 2, hidden_size=HIDDEN_2, batch_first=True, bidirectional=True)
+        self.lstm2 = nn.LSTM(input_size=HIDDEN_1, hidden_size=HIDDEN_2, batch_first=True)
         self.dropout2 = nn.Dropout(DROPOUT)
-        self.fc1 = nn.Linear(HIDDEN_2 * 2, DENSE_1)
+        self.fc1 = nn.Linear(HIDDEN_2, DENSE_1)
         self.dropout3 = nn.Dropout(DROPOUT)
         self.fc2 = nn.Linear(DENSE_1, DENSE_2)
         self.dropout4 = nn.Dropout(DROPOUT)
