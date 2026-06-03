@@ -8,7 +8,9 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.preprocessing import StandardScaler
 import random
+from collections import defaultdict
 
 # Fissa il seed per rendere l'addestramento deterministico e riproducibile
 SEED = 42
@@ -26,7 +28,7 @@ if torch.backends.mps.is_available():
 dispositivo = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 print(f"Viene utilizzato il dispositivo: {dispositivo}")
 
-CARTELLA_INPUT = "tipi_output_yolo/output_YOLOnNANO"
+CARTELLA_INPUT = "output"
 CARTELLA_MODELLI = "modelli"
 
 # Costanti e iperparametri della rete
@@ -34,21 +36,21 @@ FINESTRA = 30
 STRIDE = 15
 
 # FEATURES MULTI-PERSONA (per frame):
-#   Persona A (la più vicina):  34 coordinate + 34 velocità = 68
-#   Persona B (il suo vicino):  34 coordinate + 34 velocità = 68
+#   Persona A:  34 coordinate + 34 velocità = 68
+#   Persona B:  34 coordinate + 34 velocità = 68
 #   Distanza tra i centri:      1
-#   Variazione della distanza:  1  (negativa = si avvicinano, positiva = si allontanano)
+#   Variazione della distanza:  1
 #   Numero persone nel frame:   1
 #   TOTALE:                     139
 NUM_FEATURES = 139
 
-HIDDEN_1 = 128
+HIDDEN_1 = 192   # Aumentato per gestire 139 features
 HIDDEN_2 = 64
 DENSE_1 = 32
 DENSE_2 = 16
-DROPOUT = 0.3
+DROPOUT = 0.4    # Aumentato per contrastare l'overfitting
 NUM_CLASSI = 2
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.0005  # Ridotto per maggiore stabilità
 BATCH_SIZE = 32
 EPOCHE = 50
 PAZIENZA = 10
@@ -58,121 +60,171 @@ KP_SIZE = NUM_KP * 2  # 34 valori (17 keypoints x 2 coordinate)
 
 
 # ══════════════════════════════════════════════════════════════════════
-# PREPARAZIONE DATI — VERSIONE MULTI-PERSONA
+# PREPARAZIONE DATI — VERSIONE MULTI-PERSONA (COPPIA STABILE)
 # ══════════════════════════════════════════════════════════════════════
+
+def trova_coppia_stabile(df):
+    """
+    Trova la coppia di persone che appare più vicina IN MEDIA
+    nell'intero video. Questa coppia viene poi usata per tutti
+    i frame, garantendo coerenza temporale nella sliding window.
+
+    Ritorna (id_A, id_B) oppure None se non ci sono coppie.
+    """
+    # Calcola il centro di ogni persona per ogni frame
+    centri_per_frame = {}
+    for frame_num, dati_frame in df.groupby('frame'):
+        centri = {}
+        for _, riga in dati_frame.iterrows():
+            pid = int(riga['id_persona'])
+            coords = riga.iloc[2:].values.astype(float)
+            x_coords = coords[0::2]
+            y_coords = coords[1::2]
+            centri[pid] = np.array([np.mean(x_coords), np.mean(y_coords)])
+        centri_per_frame[frame_num] = centri
+
+    # Per ogni coppia di persone, calcola la distanza media
+    # su tutti i frame in cui appaiono ENTRAMBE
+    distanze_coppie = defaultdict(list)
+
+    for frame_num, centri in centri_per_frame.items():
+        ids = list(centri.keys())
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                coppia = (min(ids[i], ids[j]), max(ids[i], ids[j]))
+                dist = np.sqrt(np.sum((centri[ids[i]] - centri[ids[j]]) ** 2))
+                distanze_coppie[coppia].append(dist)
+
+    if not distanze_coppie:
+        return None
+
+    # Trova la coppia con la distanza media minima che appare
+    # in almeno 15 frame (mezzo secondo) per essere significativa
+    migliore_coppia = None
+    migliore_dist = float('inf')
+
+    for coppia, distanze in distanze_coppie.items():
+        if len(distanze) >= 15:  # Almeno mezzo secondo di co-presenza
+            dist_media = np.mean(distanze)
+            if dist_media < migliore_dist:
+                migliore_dist = dist_media
+                migliore_coppia = coppia
+
+    # Se nessuna coppia ha 15+ frame, prendi quella con più frame
+    if migliore_coppia is None:
+        migliore_coppia = max(distanze_coppie.keys(),
+                              key=lambda c: len(distanze_coppie[c]))
+
+    return migliore_coppia
+
 
 def crea_sequenze_da_csv(percorso_csv):
     """
-    Versione multi-persona: per ogni frame del video, individua la coppia
-    di persone più vicine e costruisce un vettore di features congiunto.
-    Le sequenze vengono create per VIDEO (non per persona), eliminando
-    il rumore degli spettatori che affliggeva il modello base.
-
-    Struttura del vettore per frame (139 features):
-        [coord_A(34), coord_B(34), vel_A(34), vel_B(34),
-         distanza(1), delta_distanza(1), num_persone(1)]
+    Versione multi-persona con COPPIA STABILE:
+    1. Trova la coppia di persone più vicina in media nel video
+    2. Usa SEMPRE quelle due persone per costruire le features
+    3. La sliding window scorre su frame coerenti (stessa coppia)
     """
     df = pd.read_csv(percorso_csv)
 
     if df.empty:
         return []
 
-    # --- PASSO 1: Raccogli i keypoints di ogni persona per frame ---
     tutti_frame = sorted(df['frame'].unique())
     if len(tutti_frame) < 2:
         return []
 
-    # Costruisci un range continuo di frame (riempi eventuali buchi)
+    # --- PASSO 1: Trova la coppia stabile ---
+    coppia = trova_coppia_stabile(df)
+    if coppia is None:
+        return []
+
+    id_A, id_B = coppia
+
+    # --- PASSO 2: Costruisci le features per la coppia stabile ---
     frame_min = tutti_frame[0]
     frame_max = tutti_frame[-1]
     frame_range = list(range(frame_min, frame_max + 1))
 
-    # Per ogni frame, salva le coordinate di ogni persona e il suo centro
+    # Pre-calcola i dati per frame
     dati_per_frame = {}
+    centri_per_frame = {}
+    conteggio_per_frame = {}
+
     for frame_num, dati_frame in df.groupby('frame'):
         persone = {}
         centri = {}
         for _, riga in dati_frame.iterrows():
             pid = int(riga['id_persona'])
-            coords = riga.iloc[2:].values.astype(float)  # 34 valori
+            coords = riga.iloc[2:].values.astype(float)
             persone[pid] = coords
-            # Centro di massa = media di tutte le coordinate x e y
             x_coords = coords[0::2]
             y_coords = coords[1::2]
             centri[pid] = np.array([np.mean(x_coords), np.mean(y_coords)])
-        dati_per_frame[frame_num] = (persone, centri)
+        dati_per_frame[frame_num] = persone
+        centri_per_frame[frame_num] = centri
+        conteggio_per_frame[frame_num] = len(persone)
 
-    # --- PASSO 2: Per ogni frame, trova la coppia più vicina ---
     lista_coord_A = []
     lista_coord_B = []
     lista_distanze = []
     lista_num_persone = []
 
+    # Ultimo valore valido per riempire i buchi
+    ultimo_A = np.zeros(KP_SIZE)
+    ultimo_B = np.zeros(KP_SIZE)
+
     for frame_num in frame_range:
-        if frame_num not in dati_per_frame:
-            # Frame senza nessuna persona rilevata (buco nel tracking)
-            lista_coord_A.append(np.zeros(KP_SIZE))
-            lista_coord_B.append(np.zeros(KP_SIZE))
-            lista_distanze.append(1.0)
-            lista_num_persone.append(0)
-            continue
+        persone = dati_per_frame.get(frame_num, {})
+        centri = centri_per_frame.get(frame_num, {})
+        n_persone = conteggio_per_frame.get(frame_num, 0)
 
-        persone, centri = dati_per_frame[frame_num]
-        ids = list(persone.keys())
-        n_persone = len(ids)
+        # Prendi le coordinate della coppia stabile
+        coord_A = persone.get(id_A, None)
+        coord_B = persone.get(id_B, None)
 
-        if n_persone == 1:
-            # Una sola persona: la seconda viene riempita con zeri
-            lista_coord_A.append(persone[ids[0]])
-            lista_coord_B.append(np.zeros(KP_SIZE))
-            lista_distanze.append(1.0)
-            lista_num_persone.append(1)
+        if coord_A is not None:
+            ultimo_A = coord_A
+        if coord_B is not None:
+            ultimo_B = coord_B
 
+        # Usa l'ultimo valore valido se manca in questo frame
+        lista_coord_A.append(ultimo_A.copy())
+        lista_coord_B.append(ultimo_B.copy())
+
+        # Calcola distanza tra i centri della coppia
+        if coord_A is not None and coord_B is not None:
+            centro_A = centri[id_A]
+            centro_B = centri[id_B]
+            dist = np.sqrt(np.sum((centro_A - centro_B) ** 2))
+            lista_distanze.append(dist)
         else:
-            # Due o più persone: trova la coppia con la distanza minima
-            min_dist = float('inf')
-            migliore_i = 0
-            migliore_j = 1
+            # Se uno dei due non è visibile, usa distanza neutra
+            lista_distanze.append(0.5)
 
-            for i in range(len(ids)):
-                for j in range(i + 1, len(ids)):
-                    dist = np.sqrt(np.sum((centri[ids[i]] - centri[ids[j]]) ** 2))
-                    if dist < min_dist:
-                        min_dist = dist
-                        migliore_i = i
-                        migliore_j = j
-
-            lista_coord_A.append(persone[ids[migliore_i]])
-            lista_coord_B.append(persone[ids[migliore_j]])
-            lista_distanze.append(min_dist)
-            lista_num_persone.append(n_persone)
+        lista_num_persone.append(n_persone)
 
     # Converti in array numpy
     coord_A = np.array(lista_coord_A)       # (T, 34)
     coord_B = np.array(lista_coord_B)       # (T, 34)
-    distanze = np.array(lista_distanze).reshape(-1, 1)      # (T, 1)
-    num_persone = np.array(lista_num_persone).reshape(-1, 1) # (T, 1)
+    distanze = np.array(lista_distanze).reshape(-1, 1)
+    num_persone = np.array(lista_num_persone).reshape(-1, 1)
 
     if len(coord_A) < 2:
         return []
 
-    # --- PASSO 3: Calcolo delle velocità ---
-    # Per il primo frame la velocità è zero
+    # --- PASSO 3: Velocità ---
     vel_A = np.diff(coord_A, axis=0)
     vel_A = np.vstack([np.zeros((1, KP_SIZE)), vel_A])
 
     vel_B = np.diff(coord_B, axis=0)
     vel_B = np.vstack([np.zeros((1, KP_SIZE)), vel_B])
 
-    # --- PASSO 4: Variazione della distanza (delta) ---
-    # Negativo = le persone si avvicinano (indicatore di collisione)
-    # Positivo = le persone si allontanano
+    # --- PASSO 4: Delta distanza ---
     delta_dist = np.diff(distanze, axis=0)
     delta_dist = np.vstack([np.zeros((1, 1)), delta_dist])
 
-    # --- PASSO 5: Concatena tutto ---
-    # coord_A(34) + coord_B(34) + vel_A(34) + vel_B(34) +
-    # distanza(1) + delta_distanza(1) + num_persone(1) = 139
+    # --- PASSO 5: Concatena ---
     features = np.hstack([
         coord_A, coord_B,
         vel_A, vel_B,
@@ -180,10 +232,7 @@ def crea_sequenze_da_csv(percorso_csv):
         num_persone
     ])
 
-    # --- PASSO 6: Sliding window per VIDEO ---
-    # A differenza del modello base che creava finestre per PERSONA,
-    # qui la finestra scorre sui frame del video. Ogni video genera
-    # un numero limitato di sequenze, tutte con etichetta corretta.
+    # --- PASSO 6: Sliding window ---
     sequenze_video = []
     for i in range(0, len(features) - FINESTRA + 1, STRIDE):
         fetta_video = features[i : i + FINESTRA]
@@ -196,31 +245,25 @@ def crea_sequenze_da_csv(percorso_csv):
 def carica_dataset(split):
     """
     Cerca le cartelle (train/val) e costruisce i dataset finali,
-    associa l'etichetta 1 per fight e 0 per no_fight e ritorna gli array
-    numpy per essere convertiti in tensori.
+    associa l'etichetta 1 per fight e 0 per no_fight.
     """
-
     X = []
     y = []
 
     categorie = ["fight", "no_fight"]
 
     for categoria in categorie:
-        if categoria == "fight":
-            etichetta = 1
-        else:
-            etichetta = 0
+        etichetta = 1 if categoria == "fight" else 0
         cartella = os.path.join(CARTELLA_INPUT, split, categoria)
         lista_file_csv = glob.glob(os.path.join(cartella, "*.csv"))
 
         for file_csv in lista_file_csv:
             sequenze = crea_sequenze_da_csv(file_csv)
-
-            print(f"  {categoria}: {len(sequenze)} sequenze da {file_csv}")
-
             for sequenza in sequenze:
                 X.append(sequenza)
                 y.append(etichetta)
+
+        print(f"  {categoria}: {sum(1 for label in y if label == etichetta)} sequenze totali")
 
     return np.array(X), np.array(y)
 
@@ -228,10 +271,6 @@ def carica_dataset(split):
 
 # CLASSI PYTORCH
 class FightDataset(torch.utils.data.Dataset):
-    """
-    Converte gli array numpy di features (X) ed etichette (y) in tensori
-    cosi da poter essere gestiti durante il training.
-    """
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.long)
@@ -244,12 +283,7 @@ class FightDataset(torch.utils.data.Dataset):
 
 
 
-
 class LSTMClassificatore(nn.Module):
-    """
-    Architettura della rete neurale (Riferimento: Capitolo 3 della tesi).
-    Composto da 2 livelli LSTM sequenziali e 3 livelli Fully Connected.
-    """
     def __init__(self):
         super(LSTMClassificatore, self).__init__()
         self.lstm1 = nn.LSTM(input_size=NUM_FEATURES, hidden_size=HIDDEN_1, batch_first=True)
@@ -263,26 +297,16 @@ class LSTMClassificatore(nn.Module):
         self.fc3 = nn.Linear(DENSE_2, NUM_CLASSI)
 
     def forward(self, x):
-        # Passaggio nei blocchi LSTM
         x, _ = self.lstm1(x)
         x = self.dropout1(x)
-        
         x, _ = self.lstm2(x)
         x = self.dropout2(x)
-        
-        # Prendiamo solo l'ultimo fotogramma della sequenza
-        x = x[:, -1, :] 
-        
-        x = self.fc1(x)
-        x = torch.relu(x)
+        x = x[:, -1, :]
+        x = torch.relu(self.fc1(x))
         x = self.dropout3(x)
-        
-        x = self.fc2(x)
-        x = torch.relu(x)
+        x = torch.relu(self.fc2(x))
         x = self.dropout4(x)
-        
         x = self.fc3(x)
-        
         return x
 
 
@@ -298,6 +322,21 @@ def main():
         print("ERRORE: Non ci sono abbastanza dati per addestrare il modello")
         return
 
+    # --- NORMALIZZAZIONE con StandardScaler ---
+    # Reshape per lo scaler: (N*30, 139)
+    n_train = X_train.shape[0]
+    n_val = X_val.shape[0]
+
+    X_train_flat = X_train.reshape(-1, NUM_FEATURES)
+    X_val_flat = X_val.reshape(-1, NUM_FEATURES)
+
+    scaler = StandardScaler()
+    X_train_flat = scaler.fit_transform(X_train_flat)
+    X_val_flat = scaler.transform(X_val_flat)
+
+    X_train = X_train_flat.reshape(n_train, FINESTRA, NUM_FEATURES)
+    X_val = X_val_flat.reshape(n_val, FINESTRA, NUM_FEATURES)
+
     print(f"\nX_train: {X_train.shape}  y_train: {y_train.shape}")
     print(f"X_val:   {X_val.shape}    y_val:   {y_val.shape}")
     print(f"Distribuzione train → fight: {sum(y_train==1)}, no_fight: {sum(y_train==0)}")
@@ -312,21 +351,21 @@ def main():
     modello = LSTMClassificatore().to(dispositivo)
 
     criterio_loss = nn.CrossEntropyLoss()
-
     ottimizzatore = optim.Adam(modello.parameters(), lr=LEARNING_RATE)
 
+    # ReduceLROnPlateau: riduce il LR quando la val_loss smette di migliorare
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        ottimizzatore, mode='min', factor=0.5, patience=5, verbose=True
+    )
 
     # TRAINING
-    # Liste per salvare i valori di ogni epoca per i grafici alla fine
     storico_loss_train = []
     storico_loss_val = []
     storico_accuracy_val = []
 
-    # Variabili per l'early stopping
-    miglior_val_loss = float('inf')  # Parte da infinito
+    miglior_val_loss = float('inf')
     contatore_pazienza = 0
 
-    # Crea la cartella per salvare il modello
     os.makedirs(CARTELLA_MODELLI, exist_ok=True)
     percorso_modello = os.path.join(CARTELLA_MODELLI, "lstm_risse_multi.pt")
 
@@ -341,15 +380,12 @@ def main():
         perdita_totale_train = 0.0
 
         for X_batch, y_batch in loader_train:
-            # Sposta i dati sullo stesso dispositivo
             X_batch = X_batch.to(dispositivo)
             y_batch = y_batch.to(dispositivo)
 
-            # I dati passano attraverso la rete
             predizioni = modello(X_batch)
             loss = criterio_loss(predizioni, y_batch)
 
-            # Calcola i gradienti e aggiorna i pesi
             ottimizzatore.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(modello.parameters(), max_norm=1.0)
@@ -357,7 +393,6 @@ def main():
 
             perdita_totale_train += loss.item()
 
-        # Media della loss
         loss_media_train = perdita_totale_train / len(loader_train)
 
         # FASE VALIDAZIONE
@@ -375,7 +410,6 @@ def main():
                 loss = criterio_loss(predizioni, y_batch)
                 perdita_totale_val += loss.item()
 
-                # Conta le predizioni per calcolare l'accuracy
                 classi_predette = predizioni.argmax(1)
                 corrette += (classi_predette == y_batch).sum().item()
                 totali += y_batch.size(0)
@@ -383,7 +417,9 @@ def main():
         loss_media_val = perdita_totale_val / len(loader_val)
         accuracy_val = corrette / totali
 
-        # Salva i valori per i grafici
+        # Aggiorna lo scheduler
+        scheduler.step(loss_media_val)
+
         storico_loss_train.append(loss_media_train)
         storico_loss_val.append(loss_media_val)
         storico_accuracy_val.append(accuracy_val)
@@ -411,13 +447,11 @@ def main():
     print(f" Modello salvato in: {percorso_modello}")
     print(f"{'='*60}")
 
-    
-    # VALUTAZIONI FINALI E METRICHE
-    # Carica il modello migliore
+
+    # VALUTAZIONI FINALI
     modello.load_state_dict(torch.load(percorso_modello, map_location=dispositivo))
     modello.eval()
 
-    # Raccogli tutte le predizioni sul validation set
     tutte_predizioni = []
     tutte_label = []
 
@@ -432,14 +466,12 @@ def main():
     tutte_predizioni = np.array(tutte_predizioni)
     tutte_label = np.array(tutte_label)
 
-    # Stampa il report completo (accuracy, precision, recall, F1)
     print(f"\n{'='*60}")
     print(" METRICHE DI VALUTAZIONE")
     print(f"{'='*60}\n")
     print(classification_report(tutte_label, tutte_predizioni,
                                 target_names=["no_fight", "fight"]))
 
-    # Matrice di confusione
     cm = confusion_matrix(tutte_label, tutte_predizioni)
     print("Matrice di confusione:")
     print(cm)
@@ -449,7 +481,6 @@ def main():
     os.makedirs("grafici", exist_ok=True)
     epoche_range = range(1, len(storico_loss_train) + 1)
 
-    # Grafico 1: Loss train vs val
     plt.figure(figsize=(10, 5))
     plt.plot(epoche_range, storico_loss_train, label="Train Loss", marker='o', markersize=3)
     plt.plot(epoche_range, storico_loss_val, label="Val Loss", marker='o', markersize=3)
@@ -463,7 +494,6 @@ def main():
     plt.close()
     print("\nGrafico salvato: grafici/loss_multi.png")
 
-    # Grafico 2: Accuracy di validazione
     plt.figure(figsize=(10, 5))
     plt.plot(epoche_range, storico_accuracy_val, label="Val Accuracy", marker='o',
              markersize=3, color='green')
@@ -477,7 +507,6 @@ def main():
     plt.close()
     print("Grafico salvato: grafici/accuracy_multi.png")
 
-    # Grafico 3: Matrice di confusione
     fig, ax = plt.subplots(figsize=(6, 5))
     im = ax.imshow(cm, cmap='Blues')
     ax.set_xticks([0, 1])
@@ -487,7 +516,6 @@ def main():
     ax.set_xlabel("Predetto")
     ax.set_ylabel("Reale")
     ax.set_title("Matrice di Confusione — Multi-Persona")
-    # Scrivi i numeri dentro le celle
     for i in range(2):
         for j in range(2):
             ax.text(j, i, str(cm[i, j]), ha='center', va='center', fontsize=20, fontweight='bold')
