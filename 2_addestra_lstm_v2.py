@@ -43,7 +43,7 @@ NUM_CLASSI = 2
 LEARNING_RATE = 0.0005
 BATCH_SIZE = 32
 EPOCHE = 50
-PAZIENZA = 10
+PAZIENZA = 5
 
 
 # ══════════════════════════════════════════════════════════════════════
