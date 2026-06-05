@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, classification_report
 from sklearn.preprocessing import StandardScaler
 import random
+import joblib
 
 # Fissa il seed per rendere l'addestramento deterministico e riproducibile
 SEED = 42
@@ -31,7 +32,7 @@ CARTELLA_INPUT = "tipi_output_yolo/output_YOLOnNANO"
 CARTELLA_MODELLI = "modello"
 
 # Costanti e iperparametri — IDENTICI al modello base
-FINESTRA = 30
+FINESTRA = 45
 STRIDE = 15
 NUM_FEATURES = 69  # 34 coordinate + 34 velocità + 1 distanza
 HIDDEN_1 = 128
@@ -43,7 +44,7 @@ NUM_CLASSI = 2
 LEARNING_RATE = 0.0005
 BATCH_SIZE = 32
 EPOCHE = 50
-PAZIENZA = 5
+PAZIENZA = 15
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -344,6 +345,7 @@ def main():
             miglior_val_loss = loss_media_val
             contatore_pazienza = 0
             torch.save(modello.state_dict(), percorso_modello)
+            joblib.dump(scaler, os.path.join(CARTELLA_MODELLI, 'scaler.pkl'))
             print(f"  ✓ Modello salvato (miglior val_loss: {miglior_val_loss:.4f})")
         else:
             contatore_pazienza += 1

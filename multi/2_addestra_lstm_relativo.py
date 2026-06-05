@@ -27,7 +27,7 @@ print(f"Viene utilizzato il dispositivo: {dispositivo}")
 CARTELLA_INPUT = "tipi_output_yolo/output_YOLOnNANO"
 CARTELLA_MODELLI = "modelli"
 
-FINESTRA = 30
+FINESTRA = 45
 STRIDE = 15
 
 # FEATURES (per frame):
