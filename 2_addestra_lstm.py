@@ -30,7 +30,7 @@ CARTELLA_INPUT = "tipi_output_yolo/output_YOLOnNANO"
 CARTELLA_MODELLI = "modello"
 
 # Costanti e iperparametri della rete
-FINESTRA = 60
+FINESTRA = 30
 STRIDE = 15
 NUM_FEATURES = 69  # 34 coordinate + 34 velocità + 1 distanza
 HIDDEN_1 = 128

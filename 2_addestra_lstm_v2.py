@@ -28,20 +28,20 @@ if torch.backends.mps.is_available():
 dispositivo = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 print(f"Viene utilizzato il dispositivo: {dispositivo}")
 
-CARTELLA_INPUT = "tipi_output_yolo/output_YOLOnNANO"
+CARTELLA_INPUT = "tipi_output/output_YOLOnNANO_3_dataset_XX"
 CARTELLA_MODELLI = "modello"
 
 # Costanti e iperparametri — IDENTICI al modello base
-FINESTRA = 45
+FINESTRA = 30
 STRIDE = 15
 NUM_FEATURES = 69  # 34 coordinate + 34 velocità + 1 distanza
 HIDDEN_1 = 128
 HIDDEN_2 = 64
 DENSE_1 = 32
 DENSE_2 = 16
-DROPOUT = 0.45
+DROPOUT = 0.3
 NUM_CLASSI = 2
-LEARNING_RATE = 0.0005
+LEARNING_RATE = 0.001
 BATCH_SIZE = 32
 EPOCHE = 50
 PAZIENZA = 15
