@@ -17,6 +17,10 @@ import os
 import sys
 import time
 import numpy as np
+import os
+import platform
+if platform.system() == "Linux":
+    os.environ["QT_QPA_PLATFORM"] = "xcb"
 import cv2
 import torch
 import torch.nn as nn
@@ -27,7 +31,7 @@ from collections import defaultdict
 # ══════════════════════════════════════════════════════════════════
 # CONFIGURAZIONE — deve coincidere con il modello addestrato
 # ══════════════════════════════════════════════════════════════════
-MODELLO_YOLO = "yolo26n-pose.pt"
+MODELLO_YOLO = "yolo26x-pose.pt"
 MODELLO_LSTM = "modello/lstm_risse.pt"
 SCALER_PATH  = "modello/scaler.pkl"
 
