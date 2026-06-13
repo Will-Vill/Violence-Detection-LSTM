@@ -47,8 +47,8 @@ NUM_CLASSI    = 2
 DROPOUT       = 0.45     # Ignorato in eval mode, serve solo per caricare i pesi
 
 PULIZIA_FRAME = 90       # Rimuovi persone non viste da N frame
-SOGLIA_FIGHT  = 0.80     # Probabilità minima per classificare come fight (0.5 = default)
-CONFERME_MIN  = 3        # Classificazioni fight consecutive necessarie prima di segnalare
+SOGLIA_FIGHT  = 0.75     # Probabilità minima per classificare come fight (0.5 = default)
+CONFERME_MIN  = 2        # Classificazioni fight consecutive necessarie prima di segnalare
 
 
 # ══════════════════════════════════════════════════════════════════
