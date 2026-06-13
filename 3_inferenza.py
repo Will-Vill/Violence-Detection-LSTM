@@ -31,7 +31,7 @@ from collections import defaultdict
 # ══════════════════════════════════════════════════════════════════
 # CONFIGURAZIONE — deve coincidere con il modello addestrato
 # ══════════════════════════════════════════════════════════════════
-MODELLO_YOLO = "yolo26x-pose.pt"
+MODELLO_YOLO = "yolo26n-pose.pt"
 MODELLO_LSTM = "modello/lstm_risse.pt"
 SCALER_PATH  = "modello/scaler.pkl"
 
@@ -47,6 +47,8 @@ NUM_CLASSI    = 2
 DROPOUT       = 0.45     # Ignorato in eval mode, serve solo per caricare i pesi
 
 PULIZIA_FRAME = 90       # Rimuovi persone non viste da N frame
+SOGLIA_FIGHT  = 0.80     # Probabilità minima per classificare come fight (0.5 = default)
+CONFERME_MIN  = 3        # Classificazioni fight consecutive necessarie prima di segnalare
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -257,6 +259,7 @@ class InferenzaRisse:
                         'centri':       [],
                         'predizione':   None,
                         'probabilita':  0.0,
+                        'contatore_fight': 0,
                         'ultimo_frame': self.frame_count,
                     }
 
@@ -271,9 +274,19 @@ class InferenzaRisse:
                     seq_centri = buf['centri'][-FINESTRA:]
 
                     features = self._calcola_features(seq_coords, seq_centri, pid)
-                    classe, prob = self._classifica(features)
+                    classe_raw, prob = self._classifica(features)
 
-                    buf['predizione']  = classe
+                    # Applica soglia di confidenza
+                    if prob >= SOGLIA_FIGHT:
+                        buf['contatore_fight'] += 1
+                    else:
+                        buf['contatore_fight'] = 0
+
+                    # Smoothing: segnala fight solo dopo N conferme consecutive
+                    if buf['contatore_fight'] >= CONFERME_MIN:
+                        buf['predizione'] = 1
+                    else:
+                        buf['predizione'] = 0
                     buf['probabilita'] = prob
 
                     # Sliding window: avanza di STRIDE
