@@ -462,9 +462,117 @@ class InferenzaRisse:
     # ══════════════════════════════════════════════════════════════
     # MODALITÀ TEST SET
     # ══════════════════════════════════════════════════════════════
+    SOGLIA_VOTO_TEST = 0.15   # Un video è "fight" se almeno il 15% delle finestre dice fight
+
+    def _classifica_video_test(self, percorso_video):
+        """
+        Classifica un singolo video per il Test Set.
+        Usa le predizioni RAW della LSTM (senza soglia/smoothing)
+        e raccoglie solo una predizione per finestra classificata.
+        Ritorna: (predizione_video, n_finestre, n_fight, percentuale_fight)
+        """
+        self.buffer_persone = {}
+        self.frame_count = 0
+
+        cap = cv2.VideoCapture(percorso_video)
+        if not cap.isOpened():
+            return None, 0, 0, 0.0
+
+        h, w = None, None
+        predizioni_finestre = []     # una per ogni finestra classificata
+
+        # Buffer locale per il test (senza smoothing)
+        buffer_test = {}
+
+        while cap.isOpened():
+            ok, frame = cap.read()
+            if not ok:
+                break
+
+            self.frame_count += 1
+            if h is None:
+                h, w = frame.shape[:2]
+
+            # YOLO-Pose detection + tracking
+            risultati = self.yolo.track(frame, persist=True, verbose=False)
+            r = risultati[0]
+
+            centri_frame = {}
+
+            if (r.keypoints is not None and r.boxes is not None
+                    and r.boxes.id is not None):
+
+                kp_persone = r.keypoints.xy.cpu().numpy()
+                id_persone = r.boxes.id.cpu().numpy().astype(int)
+
+                # Centri normalizzati
+                for i, pid in enumerate(id_persone):
+                    kp = kp_persone[i]
+                    cx = np.mean(kp[:, 0]) / w
+                    cy = np.mean(kp[:, 1]) / h
+                    centri_frame[pid] = (cx, cy)
+
+                # Aggiorna buffer per ogni persona
+                for i, pid in enumerate(id_persone):
+                    kp = kp_persone[i]
+
+                    coords_norm = np.empty(34)
+                    for j in range(17):
+                        coords_norm[j * 2]     = round(kp[j][0] / w, 4)
+                        coords_norm[j * 2 + 1] = round(kp[j][1] / h, 4)
+
+                    if pid not in buffer_test:
+                        buffer_test[pid] = {
+                            'coords': [],
+                            'centri': [],
+                            'ultimo_frame': self.frame_count,
+                        }
+
+                    buf = buffer_test[pid]
+                    buf['coords'].append(coords_norm)
+                    buf['centri'].append(centri_frame.copy())
+                    buf['ultimo_frame'] = self.frame_count
+
+                    # Classifica quando la finestra è piena (predizione RAW, no soglia)
+                    if len(buf['coords']) >= FINESTRA:
+                        seq_coords = buf['coords'][-FINESTRA:]
+                        seq_centri = buf['centri'][-FINESTRA:]
+
+                        features = self._calcola_features(seq_coords, seq_centri, pid)
+                        classe_raw, prob = self._classifica(features)
+
+                        # Raccoglie UNA predizione per finestra
+                        predizioni_finestre.append(classe_raw)
+
+                        # Sliding window
+                        buf['coords'] = buf['coords'][STRIDE:]
+                        buf['centri'] = buf['centri'][STRIDE:]
+
+            # Pulizia persone scomparse
+            da_rimuovere = [
+                pid for pid, buf in buffer_test.items()
+                if self.frame_count - buf['ultimo_frame'] > PULIZIA_FRAME
+            ]
+            for pid in da_rimuovere:
+                del buffer_test[pid]
+
+        cap.release()
+
+        n_finestre = len(predizioni_finestre)
+        if n_finestre == 0:
+            return 0, 0, 0, 0.0
+
+        n_fight = sum(predizioni_finestre)
+        perc_fight = n_fight / n_finestre
+
+        # Un video è "fight" se la percentuale di finestre fight supera la soglia
+        predizione = 1 if perc_fight >= self.SOGLIA_VOTO_TEST else 0
+
+        return predizione, n_finestre, n_fight, perc_fight
+
     def esegui_test(self, cartella_test):
         """
-        Valuta il modello su un Test Set.
+        Valuta il modello su un Test Set (UCF-Crime o simile).
 
         Struttura attesa della cartella:
           cartella_test/
@@ -475,8 +583,8 @@ class InferenzaRisse:
               ├── video3.mp4
               └── ...
 
-        Per ogni video, il sistema classifica tutte le sequenze
-        e decide con majority voting se il video contiene una rissa.
+        Usa predizioni RAW (senza soglia/smoothing di inferenza real-time).
+        Classifica un video come fight se almeno il 15% delle finestre dice fight.
         """
         import matplotlib
         matplotlib.use('Agg')
@@ -485,6 +593,7 @@ class InferenzaRisse:
 
         print(f"{'='*60}")
         print(f" VALUTAZIONE TEST SET: {cartella_test}")
+        print(f" Soglia voto: {self.SOGLIA_VOTO_TEST*100:.0f}% delle finestre")
         print(f"{'='*60}\n")
 
         y_veri     = []
@@ -508,44 +617,20 @@ class InferenzaRisse:
             for idx, nome_video in enumerate(video_files, 1):
                 percorso = os.path.join(cartella, nome_video)
 
-                # Reset completo del buffer per ogni video
-                self.buffer_persone = {}
-                self.frame_count = 0
+                pred, n_fin, n_fight, perc = self._classifica_video_test(percorso)
 
-                cap = cv2.VideoCapture(percorso)
-                if not cap.isOpened():
+                if pred is None:
                     print(f"    [{idx}/{len(video_files)}] {nome_video} → ERRORE apertura")
                     continue
 
-                predizioni_video = []
-
-                while cap.isOpened():
-                    ok, frame = cap.read()
-                    if not ok:
-                        break
-                    self.processa_frame(frame)
-
-                    # Raccogli le predizioni di tutte le persone
-                    for pid, buf in self.buffer_persone.items():
-                        if buf['predizione'] is not None:
-                            predizioni_video.append(buf['predizione'])
-
-                cap.release()
-
-                # Majority voting
-                if len(predizioni_video) > 0:
-                    predizione = 1 if sum(predizioni_video) > len(predizioni_video) / 2 else 0
-                else:
-                    predizione = 0
-
                 y_veri.append(etichetta_vera)
-                y_predetti.append(predizione)
+                y_predetti.append(pred)
 
-                esito = "✓" if predizione == etichetta_vera else "✗"
-                nome_p = "FIGHT" if predizione == 1 else "NO_FIGHT"
-                n_seq  = len(predizioni_video)
+                esito = "✓" if pred == etichetta_vera else "✗"
+                nome_p = "FIGHT" if pred == 1 else "NO_FIGHT"
                 print(f"    [{idx}/{len(video_files)}] {nome_video}"
-                      f"  →  {nome_p}  {esito}  ({n_seq} sequenze)")
+                      f"  →  {nome_p}  {esito}  "
+                      f"({n_fight}/{n_fin} finestre fight = {perc*100:.1f}%)")
 
         # ── Metriche ──
         if len(y_veri) == 0:
@@ -576,7 +661,7 @@ class InferenzaRisse:
         ax.set_yticklabels(["no_fight", "fight"])
         ax.set_xlabel("Predetto")
         ax.set_ylabel("Reale")
-        ax.set_title("Matrice di Confusione — Test Set")
+        ax.set_title("Matrice di Confusione — Test Set (UCF-Crime)")
         for i in range(2):
             for j in range(2):
                 ax.text(j, i, str(cm[i, j]),
