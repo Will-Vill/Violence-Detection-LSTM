@@ -279,7 +279,7 @@ def main():
     contatore_pazienza = 0
 
     os.makedirs(CARTELLA_MODELLI, exist_ok=True)
-    percorso_modello = os.path.join(CARTELLA_MODELLI, "lstm_risse.pt")
+    percorso_modello = os.path.join(CARTELLA_MODELLI, "modello_ottimizzato.pt")
 
     print(f"\n{'='*60}")
     print(f" Inizio addestramento — max {EPOCHE} epoche")

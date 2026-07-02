@@ -260,7 +260,7 @@ def main():
 
     # Crea la cartella per salvare il modello
     os.makedirs(CARTELLA_MODELLI, exist_ok=True)
-    percorso_modello = os.path.join(CARTELLA_MODELLI, "lstm_risse.pt")
+    percorso_modello = os.path.join(CARTELLA_MODELLI, "modello_base.pt")
 
     print(f"\n{'='*60}")
     print(f" Inizio addestramento — max {EPOCHE} epoche")
