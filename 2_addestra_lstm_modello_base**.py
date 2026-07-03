@@ -46,20 +46,12 @@ PAZIENZA = 10
 
 # PREPARAZIONE DATI
 def crea_sequenze_da_csv(percorso_csv):
-    """
-    Legge un file CSV contenente i keypoints estratti.
-    Calcola la velocità (spostamento tra frame consecutivi) e la distanza
-    dalla persona più vicina nello stesso frame.
-    Applica una sliding window per dividere i dati in sequenze temporali
-    per ID.
-    """
+    """Legge un CSV di keypoints, calcola velocità e distanza, e applica sliding window."""
     df = pd.read_csv(percorso_csv)
     
     sequenze_video = []
 
-    # --- PASSO 1: Pre-calcolo del centro di massa di ogni persona per frame ---
-    # Per ogni frame del video, calcoliamo la posizione media (centro) di
-    # ogni persona presente. Questo serve dopo per calcolare le distanze.
+    # Pre-calcolo del centro di massa di ogni persona per frame
     centri_per_frame = {}
 
     for frame_num, dati_frame in df.groupby('frame'):
@@ -67,13 +59,12 @@ def crea_sequenze_da_csv(percorso_csv):
         for _, riga in dati_frame.iterrows():
             pid = int(riga['id_persona'])
             coords = riga.iloc[2:].values.astype(float)
-            # Il centro è la media di tutte le coordinate x e y
-            x_coords = coords[0::2]  # posizioni pari = valori x
-            y_coords = coords[1::2]  # posizioni dispari = valori y
+            x_coords = coords[0::2]
+            y_coords = coords[1::2]
             centri[pid] = np.array([np.mean(x_coords), np.mean(y_coords)])
         centri_per_frame[frame_num] = centri
 
-    # --- PASSO 2: Per ogni persona, costruisci le sequenze ---
+    # Per ogni persona, costruisci le sequenze
     for id_persona, dati_persona in df.groupby('id_persona'):
         coordinate = dati_persona.iloc[:, 2:].values
         lista_frame = dati_persona['frame'].values
@@ -81,25 +72,19 @@ def crea_sequenze_da_csv(percorso_csv):
         if len(coordinate) < 2:
             continue
 
-        # Calcolo della velocità: differenza tra frame consecutivi
-        # Per il primo frame la velocità è zero
+        # Velocità: differenza tra frame consecutivi
         velocita = np.diff(coordinate, axis=0)
         velocita = np.vstack([np.zeros((1, coordinate.shape[1])), velocita])
 
-        # --- PASSO 3: Calcolo distanza dal vicino più prossimo ---
-        # Per ogni frame di questa persona, cerchiamo l'altra persona
-        # più vicina e calcoliamo la distanza euclidea tra i loro centri.
-        # Se la persona è sola nel frame, la distanza è 1.0 (lontano).
+        # Distanza dal vicino più prossimo
         distanze = []
 
         for frame_num in lista_frame:
             centri = centri_per_frame.get(frame_num, {})
 
             if len(centri) < 2:
-                # Solo questa persona nel frame, nessun vicino
                 distanze.append(1.0)
             else:
-                # Cerca la persona più vicina
                 centro_persona = centri[id_persona]
                 min_dist = float('inf')
 
@@ -125,11 +110,7 @@ def crea_sequenze_da_csv(percorso_csv):
 
 
 def carica_dataset(split):
-    """
-    Cerca le cartelle (train/val) e costruisce i dataset finali,
-    associa l'etichetta 1 per fight e 0 per no_fight e ritorna gli array
-    numpy per essere convertiti in tensori.
-    """
+    """Costruisce i dataset finali associando etichette fight/no_fight."""
 
     X = []
     y = []
@@ -159,10 +140,7 @@ def carica_dataset(split):
 
 # CLASSI PYTORCH
 class FightDataset(torch.utils.data.Dataset):
-    """
-    Converte gli array numpy di features (X) ed etichette (y) in tensori
-    cosi da poter essere gestiti durante il training.
-    """
+    """Dataset PyTorch per le sequenze di features."""
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.long)
@@ -177,10 +155,7 @@ class FightDataset(torch.utils.data.Dataset):
 
 
 class LSTMClassificatore(nn.Module):
-    """
-    Architettura della rete neurale (Riferimento: Capitolo 3 della tesi).
-    Composto da 2 livelli LSTM sequenziali e 3 livelli Fully Connected.
-    """
+    """Rete LSTM a 2 livelli con 3 livelli Fully Connected."""
     def __init__(self):
         super(LSTMClassificatore, self).__init__()
         self.lstm1 = nn.LSTM(input_size=NUM_FEATURES, hidden_size=HIDDEN_1, batch_first=True)
@@ -194,14 +169,13 @@ class LSTMClassificatore(nn.Module):
         self.fc3 = nn.Linear(DENSE_2, NUM_CLASSI)
 
     def forward(self, x):
-        # Passaggio nei blocchi LSTM
         x, _ = self.lstm1(x)
         x = self.dropout1(x)
         
         x, _ = self.lstm2(x)
         x = self.dropout2(x)
         
-        # Prendiamo solo l'ultimo fotogramma della sequenza
+        # Ultimo fotogramma della sequenza
         x = x[:, -1, :] 
         
         x = self.fc1(x)

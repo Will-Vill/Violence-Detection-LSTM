@@ -1,15 +1,10 @@
 """
 3_inferenza.py — Script di Inferenza per il Rilevamento di Risse
 
-Modalità di utilizzo:
-  python 3_inferenza.py --video percorso/al/video.mp4      → Analizza un file video
-  python 3_inferenza.py --webcam                            → Inferenza in tempo reale
-  python 3_inferenza.py --test percorso/cartella_test/      → Valuta su un Test Set
-
-Requisiti:
-  - modello/lstm_risse.pt   (modello LSTM addestrato)
-  - modello/scaler.pkl      (StandardScaler salvato dal training)
-  - yolo26n-pose.pt         (modello YOLO-Pose)
+Modalità:
+  python 3_inferenza.py --video percorso/al/video.mp4
+  python 3_inferenza.py --webcam
+  python 3_inferenza.py --test percorso/cartella_test/
 """
 
 import argparse
@@ -29,30 +24,30 @@ from ultralytics import YOLO
 from collections import defaultdict
 
 # ══════════════════════════════════════════════════════════════════
-# CONFIGURAZIONE — deve coincidere con il modello addestrato
+# CONFIGURAZIONE
 # ══════════════════════════════════════════════════════════════════
 MODELLO_YOLO = "yolo26n-pose.pt"
 MODELLO_LSTM = "modello/lstm_risse.pt"
 SCALER_PATH  = "modello/scaler.pkl"
 
 # Iperparametri (devono corrispondere a quelli dell'addestramento)
-FINESTRA      = 45       # Finestra temporale (45 fotogrammi = 1.5s a 30fps)
-STRIDE        = 15       # Passo di scorrimento della sliding window
-NUM_FEATURES  = 69       # 34 coordinate + 34 velocità + 1 distanza
+FINESTRA      = 45
+STRIDE        = 15
+NUM_FEATURES  = 69
 HIDDEN_1      = 128
 HIDDEN_2      = 64
 DENSE_1       = 32
 DENSE_2       = 16
 NUM_CLASSI    = 2
-DROPOUT       = 0.45     # Ignorato in eval mode, serve solo per caricare i pesi
+DROPOUT       = 0.45
 
-PULIZIA_FRAME = 90       # Rimuovi persone non viste da N frame
-SOGLIA_FIGHT  = 0.75     # Probabilità minima per classificare come fight (0.5 = default)
-CONFERME_MIN  = 2        # Classificazioni fight consecutive necessarie prima di segnalare
+PULIZIA_FRAME = 90
+SOGLIA_FIGHT  = 0.75
+CONFERME_MIN  = 2
 
 
 # ══════════════════════════════════════════════════════════════════
-# MODELLO LSTM — struttura identica al file di addestramento (v2)
+# MODELLO LSTM
 # ══════════════════════════════════════════════════════════════════
 class LSTMClassificatore(nn.Module):
     def __init__(self):
@@ -72,7 +67,7 @@ class LSTMClassificatore(nn.Module):
         x = self.dropout1(x)
         x, _ = self.lstm2(x)
         x = self.dropout2(x)
-        x = x[:, -1, :]                   # Ultimo step temporale
+        x = x[:, -1, :]
         x = torch.relu(self.fc1(x))
         x = self.dropout3(x)
         x = torch.relu(self.fc2(x))
@@ -82,7 +77,7 @@ class LSTMClassificatore(nn.Module):
 
 
 # ══════════════════════════════════════════════════════════════════
-# CONNESSIONI SCHELETRO COCO (per il disegno)
+# CONNESSIONI SCHELETRO COCO
 # ══════════════════════════════════════════════════════════════════
 CONNESSIONI_COCO = [
     (0, 1), (0, 2), (1, 3), (2, 4),            # Testa
@@ -135,23 +130,14 @@ class InferenzaRisse:
 
         print("Sistema pronto!\n")
 
-    # ──────────────────────────────────────────────────────────────
-    # Calcolo features (identico al training)
-    # ──────────────────────────────────────────────────────────────
     def _calcola_features(self, coords_list, centri_list, pid):
-        """
-        Calcola le 69 features per una sequenza di FINESTRA frame.
-        coords_list : lista di array (34,) — coordinate normalizzate
-        centri_list : lista di dict {pid: (cx, cy)} per ciascun frame
-        pid         : id della persona da analizzare
-        """
-        coords = np.array(coords_list)            # (FINESTRA, 34)
+        coords = np.array(coords_list)
 
-        # Velocità frame-to-frame (identico al training)
+        # Velocità frame-to-frame
         velocita = np.diff(coords, axis=0)
-        velocita = np.vstack([np.zeros((1, 34)), velocita])   # (FINESTRA, 34)
+        velocita = np.vstack([np.zeros((1, 34)), velocita])
 
-        # Distanza dal vicino più prossimo (identico al training)
+        # Distanza dal vicino più prossimo
         distanze = []
         for centri in centri_list:
             if pid not in centri or len(centri) < 2:
@@ -164,19 +150,11 @@ class InferenzaRisse:
                 )
                 distanze.append(min_dist)
 
-        distanze = np.array(distanze).reshape(-1, 1)  # (FINESTRA, 1)
+        distanze = np.array(distanze).reshape(-1, 1)
 
-        # Concatena: coordinate(34) + velocità(34) + distanza(1) = 69
         return np.hstack([coords, velocita, distanze])
 
-    # ──────────────────────────────────────────────────────────────
-    # Classificazione di una sequenza
-    # ──────────────────────────────────────────────────────────────
     def _classifica(self, features):
-        """
-        Classifica una sequenza (FINESTRA, 69).
-        Ritorna (classe, probabilità_fight).
-        """
         features_flat = features.reshape(-1, NUM_FEATURES)
         features_norm = self.scaler.transform(features_flat)
         features_norm = features_norm.reshape(1, FINESTRA, NUM_FEATURES)
@@ -190,9 +168,6 @@ class InferenzaRisse:
 
         return classe, prob_fight
 
-    # ──────────────────────────────────────────────────────────────
-    # Disegna lo scheletro
-    # ──────────────────────────────────────────────────────────────
     def _disegna_scheletro(self, frame, kp, colore):
         for (a, b) in CONNESSIONI_COCO:
             pt1 = (int(kp[a][0]), int(kp[a][1]))
@@ -204,37 +179,23 @@ class InferenzaRisse:
             if x > 0 and y > 0:
                 cv2.circle(frame, (x, y), 4, colore, -1)
 
-    # ──────────────────────────────────────────────────────────────
-    # Processa un singolo frame
-    # ──────────────────────────────────────────────────────────────
     def processa_frame(self, frame):
-        """
-        Pipeline completa per un frame:
-        1. YOLO-Pose → detection + tracking
-        2. Aggiorna i buffer per ciascuna persona
-        3. Classifica le sequenze complete
-        4. Annota il frame
-
-        Ritorna: (frame_annotato, rissa_rilevata)
-        """
         self.frame_count += 1
         h, w = frame.shape[:2]
 
-        # 1. YOLO-Pose detection + tracking
         risultati = self.yolo.track(frame, persist=True, verbose=False)
         r = risultati[0]
 
-        centri_frame = {}     # {pid: (cx, cy)} — centri di massa normalizzati
+        centri_frame = {}
         persone_frame = set()
 
         if (r.keypoints is not None and r.boxes is not None
                 and r.boxes.id is not None):
 
-            kp_persone = r.keypoints.xy.cpu().numpy()     # (N, 17, 2) pixel
+            kp_persone = r.keypoints.xy.cpu().numpy()
             id_persone = r.boxes.id.cpu().numpy().astype(int)
             boxes      = r.boxes.xyxy.cpu().numpy().astype(int)
 
-            # Centri di massa normalizzati (per calcolo distanza)
             for i, pid in enumerate(id_persone):
                 kp = kp_persone[i]
                 cx = np.mean(kp[:, 0]) / w
@@ -242,17 +203,14 @@ class InferenzaRisse:
                 centri_frame[pid] = (cx, cy)
                 persone_frame.add(pid)
 
-            # 2. Aggiorna i buffer per ciascuna persona
             for i, pid in enumerate(id_persone):
                 kp = kp_persone[i]
 
-                # Coordinate normalizzate 0-1 (come lo script di estrazione)
                 coords_norm = np.empty(34)
                 for j in range(17):
                     coords_norm[j * 2]     = round(kp[j][0] / w, 4)
                     coords_norm[j * 2 + 1] = round(kp[j][1] / h, 4)
 
-                # Inizializza buffer se persona nuova
                 if pid not in self.buffer_persone:
                     self.buffer_persone[pid] = {
                         'coords':       [],
@@ -268,7 +226,6 @@ class InferenzaRisse:
                 buf['centri'].append(centri_frame.copy())
                 buf['ultimo_frame'] = self.frame_count
 
-                # 3. Classifica quando la finestra è piena
                 if len(buf['coords']) >= FINESTRA:
                     seq_coords = buf['coords'][-FINESTRA:]
                     seq_centri = buf['centri'][-FINESTRA:]
@@ -276,24 +233,20 @@ class InferenzaRisse:
                     features = self._calcola_features(seq_coords, seq_centri, pid)
                     classe_raw, prob = self._classifica(features)
 
-                    # Applica soglia di confidenza
                     if prob >= SOGLIA_FIGHT:
                         buf['contatore_fight'] += 1
                     else:
                         buf['contatore_fight'] = 0
 
-                    # Smoothing: segnala fight solo dopo N conferme consecutive
                     if buf['contatore_fight'] >= CONFERME_MIN:
                         buf['predizione'] = 1
                     else:
                         buf['predizione'] = 0
                     buf['probabilita'] = prob
 
-                    # Sliding window: avanza di STRIDE
                     buf['coords'] = buf['coords'][STRIDE:]
                     buf['centri'] = buf['centri'][STRIDE:]
 
-            # 4. Annota il frame
             for i, pid in enumerate(id_persone):
                 box = boxes[i]
                 kp  = kp_persone[i]
@@ -301,20 +254,18 @@ class InferenzaRisse:
                 pred = buf.get('predizione')
                 prob = buf.get('probabilita', 0.0)
 
-                if pred == 1:                               # FIGHT
+                if pred == 1:
                     colore   = (0, 0, 255)
                     etichetta = f"FIGHT {prob*100:.0f}%"
-                elif pred == 0:                             # NO FIGHT
+                elif pred == 0:
                     colore   = (0, 220, 0)
                     etichetta = "OK"
-                else:                                       # In attesa
+                else:
                     colore   = (180, 180, 180)
                     etichetta = "..."
 
-                # Bounding box
                 cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), colore, 2)
 
-                # Etichetta con sfondo
                 testo = f"ID:{pid} {etichetta}"
                 (tw, th), _ = cv2.getTextSize(testo, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
                 cv2.rectangle(frame,
@@ -325,10 +276,8 @@ class InferenzaRisse:
                             (box[0] + 2, box[1] - 5),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-                # Scheletro
                 self._disegna_scheletro(frame, kp, colore)
 
-        # Pulizia: rimuovi persone non viste da PULIZIA_FRAME frame
         da_rimuovere = [
             pid for pid, buf in self.buffer_persone.items()
             if self.frame_count - buf['ultimo_frame'] > PULIZIA_FRAME
@@ -336,13 +285,11 @@ class InferenzaRisse:
         for pid in da_rimuovere:
             del self.buffer_persone[pid]
 
-        # Stato globale: c'è una rissa?
         self.rissa_rilevata = any(
             buf.get('predizione') == 1
             for buf in self.buffer_persone.values()
         )
 
-        # Banner superiore
         if self.rissa_rilevata:
             cv2.rectangle(frame, (0, 0), (w, 50), (0, 0, 200), -1)
             cv2.putText(frame, "RISSA RILEVATA",
@@ -355,11 +302,7 @@ class InferenzaRisse:
         return frame, self.rissa_rilevata
 
 
-    # ══════════════════════════════════════════════════════════════
-    # MODALITÀ VIDEO
-    # ══════════════════════════════════════════════════════════════
     def esegui_video(self, percorso_video, salva_output=True):
-        """Analizza un file video e mostra i risultati a schermo."""
         print(f"Apertura video: {percorso_video}")
 
         cap = cv2.VideoCapture(percorso_video)
@@ -372,7 +315,6 @@ class InferenzaRisse:
         totale = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         print(f"Video: {w}x{h} @ {fps_video:.0f} FPS — {totale} frame\n")
 
-        # Writer per il video annotato
         writer = None
         nome_output = None
         if salva_output:
@@ -416,11 +358,7 @@ class InferenzaRisse:
             print(f"Video annotato salvato: {nome_output}")
 
 
-    # ══════════════════════════════════════════════════════════════
-    # MODALITÀ WEBCAM
-    # ══════════════════════════════════════════════════════════════
     def esegui_webcam(self):
-        """Inferenza in tempo reale dalla webcam."""
         print("Avvio webcam ... (premi 'q' per uscire)\n")
 
         cap = cv2.VideoCapture(1)
@@ -438,7 +376,6 @@ class InferenzaRisse:
 
             frame_ann, _ = self.processa_frame(frame)
 
-            # Calcolo FPS in tempo reale
             fps_cnt += 1
             dt = time.time() - fps_t0
             if dt >= 1.0:
@@ -459,18 +396,9 @@ class InferenzaRisse:
         cv2.destroyAllWindows()
 
 
-    # ══════════════════════════════════════════════════════════════
-    # MODALITÀ TEST SET
-    # ══════════════════════════════════════════════════════════════
-    SOGLIA_VOTO_TEST = 0.15   # Un video è "fight" se almeno il 15% delle finestre dice fight
+    SOGLIA_VOTO_TEST = 0.15
 
     def _classifica_video_test(self, percorso_video):
-        """
-        Classifica un singolo video per il Test Set.
-        Usa le predizioni RAW della LSTM (senza soglia/smoothing)
-        e raccoglie solo una predizione per finestra classificata.
-        Ritorna: (predizione_video, n_finestre, n_fight, percentuale_fight)
-        """
         self.buffer_persone = {}
         self.frame_count = 0
 
@@ -479,9 +407,8 @@ class InferenzaRisse:
             return None, 0, 0, 0.0
 
         h, w = None, None
-        predizioni_finestre = []     # una per ogni finestra classificata
+        predizioni_finestre = []
 
-        # Buffer locale per il test (senza smoothing)
         buffer_test = {}
 
         while cap.isOpened():
@@ -493,7 +420,6 @@ class InferenzaRisse:
             if h is None:
                 h, w = frame.shape[:2]
 
-            # YOLO-Pose detection + tracking
             risultati = self.yolo.track(frame, persist=True, verbose=False)
             r = risultati[0]
 
@@ -505,14 +431,12 @@ class InferenzaRisse:
                 kp_persone = r.keypoints.xy.cpu().numpy()
                 id_persone = r.boxes.id.cpu().numpy().astype(int)
 
-                # Centri normalizzati
                 for i, pid in enumerate(id_persone):
                     kp = kp_persone[i]
                     cx = np.mean(kp[:, 0]) / w
                     cy = np.mean(kp[:, 1]) / h
                     centri_frame[pid] = (cx, cy)
 
-                # Aggiorna buffer per ogni persona
                 for i, pid in enumerate(id_persone):
                     kp = kp_persone[i]
 
@@ -533,7 +457,6 @@ class InferenzaRisse:
                     buf['centri'].append(centri_frame.copy())
                     buf['ultimo_frame'] = self.frame_count
 
-                    # Classifica quando la finestra è piena (predizione RAW, no soglia)
                     if len(buf['coords']) >= FINESTRA:
                         seq_coords = buf['coords'][-FINESTRA:]
                         seq_centri = buf['centri'][-FINESTRA:]
@@ -541,14 +464,11 @@ class InferenzaRisse:
                         features = self._calcola_features(seq_coords, seq_centri, pid)
                         classe_raw, prob = self._classifica(features)
 
-                        # Raccoglie UNA predizione per finestra
                         predizioni_finestre.append(classe_raw)
 
-                        # Sliding window
                         buf['coords'] = buf['coords'][STRIDE:]
                         buf['centri'] = buf['centri'][STRIDE:]
 
-            # Pulizia persone scomparse
             da_rimuovere = [
                 pid for pid, buf in buffer_test.items()
                 if self.frame_count - buf['ultimo_frame'] > PULIZIA_FRAME
@@ -565,27 +485,11 @@ class InferenzaRisse:
         n_fight = sum(predizioni_finestre)
         perc_fight = n_fight / n_finestre
 
-        # Un video è "fight" se la percentuale di finestre fight supera la soglia
         predizione = 1 if perc_fight >= self.SOGLIA_VOTO_TEST else 0
 
         return predizione, n_finestre, n_fight, perc_fight
 
     def esegui_test(self, cartella_test):
-        """
-        Valuta il modello su un Test Set (UCF-Crime o simile).
-
-        Struttura attesa della cartella:
-          cartella_test/
-          ├── fight/
-          │   ├── video1.mp4
-          │   └── video2.avi
-          └── no_fight/
-              ├── video3.mp4
-              └── ...
-
-        Usa predizioni RAW (senza soglia/smoothing di inferenza real-time).
-        Classifica un video come fight se almeno il 15% delle finestre dice fight.
-        """
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
@@ -632,7 +536,6 @@ class InferenzaRisse:
                       f"  →  {nome_p}  {esito}  "
                       f"({n_fight}/{n_fin} finestre fight = {perc*100:.1f}%)")
 
-        # ── Metriche ──
         if len(y_veri) == 0:
             print("\nNessun video processato.")
             return
@@ -651,7 +554,6 @@ class InferenzaRisse:
         print("Matrice di confusione:")
         print(cm)
 
-        # Salva matrice di confusione
         os.makedirs("grafici", exist_ok=True)
         fig, ax = plt.subplots(figsize=(6, 5))
         im = ax.imshow(cm, cmap='Blues')

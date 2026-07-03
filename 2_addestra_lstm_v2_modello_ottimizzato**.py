@@ -47,21 +47,17 @@ EPOCHE = 50
 PAZIENZA = 15
 
 
-# ══════════════════════════════════════════════════════════════════════
-# PREPARAZIONE DATI — UGUALE AL BASE + FILTRO SPETTATORI
-# ══════════════════════════════════════════════════════════════════════
+# ════
+# PREPARAZIONE DATI
+# ════
 
 def crea_sequenze_da_csv(percorso_csv, categoria):
-    """
-    Identico al modello base, con UNA sola aggiunta:
-    nei video FIGHT, scarta le persone con velocità bassa
-    (probabili spettatori). Nei video NO-FIGHT, tiene tutti.
-    """
+    """Legge un CSV di keypoints, applica il filtro spettatori sui fight, e crea sequenze."""
     df = pd.read_csv(percorso_csv)
 
     sequenze_video = []
 
-    # --- PASSO 1: Centro di massa per il calcolo distanze (identico al base) ---
+    # Centro di massa per il calcolo distanze
     centri_per_frame = {}
     for frame_num, dati_frame in df.groupby('frame'):
         centri = {}
@@ -73,10 +69,7 @@ def crea_sequenze_da_csv(percorso_csv, categoria):
             centri[pid] = np.array([np.mean(x_coords), np.mean(y_coords)])
         centri_per_frame[frame_num] = centri
 
-    # --- FILTRO SPETTATORI (solo per video FIGHT) ---
-    # Per ogni persona calcola la velocità media.
-    # Nei video fight, tiene solo le persone con velocità sopra la mediana.
-    # Questo rimuove gli spettatori fermi che venivano etichettati "fight".
+    # Filtro spettatori (solo per video fight)
     persone_da_tenere = set(df['id_persona'].unique())
 
     if categoria == "fight":
@@ -86,17 +79,15 @@ def crea_sequenze_da_csv(percorso_csv, categoria):
             if len(coords) < 2:
                 velocita_per_persona[id_persona] = 0.0
                 continue
-            # Velocità media = media degli spostamenti frame-to-frame
             diff = np.diff(coords, axis=0)
             vel_media = np.mean(np.abs(diff))
             velocita_per_persona[id_persona] = vel_media
 
         if len(velocita_per_persona) > 2:
-            # Calcola la mediana delle velocità
             valori_vel = list(velocita_per_persona.values())
             mediana_vel = np.median(valori_vel)
 
-            # Tieni solo chi si muove sopra la mediana (i più attivi)
+            # Tieni solo chi si muove sopra la mediana
             persone_da_tenere = set()
             for pid, vel in velocita_per_persona.items():
                 if vel >= mediana_vel:
@@ -108,9 +99,8 @@ def crea_sequenze_da_csv(percorso_csv, categoria):
                               key=lambda p: velocita_per_persona[p], reverse=True)[:2]
                 persone_da_tenere = set(top2)
 
-    # --- PASSO 2: Per ogni persona FILTRATA, costruisci le sequenze ---
+    # Per ogni persona filtrata, costruisci le sequenze
     for id_persona, dati_persona in df.groupby('id_persona'):
-        # Salta le persone filtrate (spettatori nei video fight)
         if id_persona not in persone_da_tenere:
             continue
 
@@ -120,11 +110,11 @@ def crea_sequenze_da_csv(percorso_csv, categoria):
         if len(coordinate) < 2:
             continue
 
-        # Calcolo velocità (identico al base)
+        # Calcolo velocità
         velocita = np.diff(coordinate, axis=0)
         velocita = np.vstack([np.zeros((1, coordinate.shape[1])), velocita])
 
-        # Calcolo distanza dal vicino più prossimo (identico al base)
+        # Distanza dal vicino più prossimo
         distanze = []
         for frame_num in lista_frame:
             centri = centri_per_frame.get(frame_num, {})
@@ -145,7 +135,7 @@ def crea_sequenze_da_csv(percorso_csv, categoria):
         # Concatena: coordinate(34) + velocità(34) + distanza(1) = 69
         features = np.hstack([coordinate, velocita, distanze])
 
-        # Sliding window (identico al base)
+        # Sliding window
         for i in range(0, len(features) - FINESTRA + 1, STRIDE):
             fetta_video = features[i : i + FINESTRA]
             sequenze_video.append(fetta_video)
@@ -179,7 +169,7 @@ def carica_dataset(split):
 
 
 
-# CLASSI PYTORCH — IDENTICHE AL BASE
+# CLASSI PYTORCH
 class FightDataset(torch.utils.data.Dataset):
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
@@ -193,9 +183,7 @@ class FightDataset(torch.utils.data.Dataset):
 
 
 class LSTMClassificatore(nn.Module):
-    """
-    Architettura IDENTICA al modello base.
-    """
+    """Rete LSTM a 2 livelli con 3 livelli Fully Connected."""
     def __init__(self):
         super(LSTMClassificatore, self).__init__()
         self.lstm1 = nn.LSTM(input_size=NUM_FEATURES, hidden_size=HIDDEN_1, batch_first=True)

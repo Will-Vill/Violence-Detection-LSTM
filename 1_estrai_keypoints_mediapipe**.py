@@ -8,18 +8,12 @@ import mediapipe as mp
 from mediapipe.tasks.python import vision, BaseOptions
 
 # CONFIGURAZIONE
-# Script di estrazione PURO MediaPipe — NESSUN uso di YOLO.
-# MediaPipe PoseLandmarker rileva le persone e stima la posa in un unico passaggio.
-# NOTA: MediaPipe NON ha un sistema di tracking degli ID tra frame,
-#       quindi gli ID vengono assegnati per posizione spaziale (da sinistra a destra).
 MODELLO_MP = "pose_landmarker.task"
-CARTELLA_DATASET = "datasets"
+CARTELLA_DATASET = "datasets/RWF2000_RealLifeViolence"
 CARTELLA_OUTPUT = "output_mediapipe"
 MAX_PERSONE = 5  # numero massimo di persone da rilevare per frame
 
-# Mapping da MediaPipe (33 landmark) → 17 keypoints COCO
-# Questo assicura che l'output CSV abbia lo stesso formato
-# dello script YOLO-Pose, così lo script 2 funziona senza modifiche.
+# Mapping da MediaPipe (33 landmark) ai 17 keypoints COCO
 MAPPING_MP_A_COCO = [
     0,   # 0  naso
     2,   # 1  occhio_sx
@@ -48,12 +42,7 @@ NOMI_KP = [
 
 
 def calcola_centro(landmarks):
-    """
-    Calcola il centro di una persona come media delle coordinate
-    dell'anca sinistra (indice 23) e destra (indice 24) di MediaPipe.
-    Serve per ordinare le persone spazialmente da sinistra a destra,
-    simulando un rudimentale sistema di tracking per posizione.
-    """
+    """Calcola il centro di una persona come media delle coordinate delle anche."""
     anca_sx = landmarks[23]
     anca_dx = landmarks[24]
     centro_x = (anca_sx.x + anca_dx.x) / 2
@@ -62,14 +51,7 @@ def calcola_centro(landmarks):
 
 
 def estrazione_video_csv(detector, percorso_video, percorso_csv):
-    """
-    Estrae i keypoints da un video usando SOLO MediaPipe.
-    Per ogni frame, MediaPipe rileva fino a MAX_PERSONE persone.
-    Poiché MediaPipe non ha tracking, gli ID vengono assegnati
-    ordinando le persone da sinistra a destra in base alla posizione
-    del centro del corpo. Questo garantisce una certa coerenza
-    temporale degli ID ma non è affidabile come il tracking di YOLO.
-    """
+    """Estrae i keypoints da un video usando MediaPipe."""
     video = cv2.VideoCapture(percorso_video)
     if not video.isOpened():
         return 0
@@ -103,8 +85,7 @@ def estrazione_video_csv(detector, percorso_video, percorso_csv):
             risultato = detector.detect(mp_image)
 
             if risultato.pose_landmarks:
-                # Ordina le persone da sinistra a destra per il centro del corpo
-                # Questo simula un tracking rudimentale basato sulla posizione
+                # Ordina le persone da sinistra a destra per assegnare gli ID
                 persone_con_centro = []
                 for landmarks in risultato.pose_landmarks:
                     centro_x, _ = calcola_centro(landmarks)

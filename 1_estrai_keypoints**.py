@@ -6,9 +6,9 @@ import time
 from ultralytics import YOLO
 
 # CONFIGURAZIONE
-MODELLO = "yolo26x-pose.pt"
-CARTELLA_DATASET = "datasets"
-CARTELLA_OUTPUT = "tipi_output/output_YOLOnNANO_3_dataset_XX"
+MODELLO = "yolo26n-pose.pt"
+CARTELLA_DATASET = "datasets/RWF2000_RealLifeViolence"
+CARTELLA_OUTPUT = "output"
 
 NOMI_KP = [
     "naso", "occhio_sx", "occhio_dx", "orecchio_sx", "orecchio_dx",
