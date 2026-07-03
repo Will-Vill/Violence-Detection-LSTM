@@ -27,7 +27,7 @@ from collections import defaultdict
 # CONFIGURAZIONE
 # ══════════════════════════════════════════════════════════════════
 MODELLO_YOLO = "yolo26n-pose.pt"
-MODELLO_LSTM = "modello/lstm_risse.pt"
+MODELLO_LSTM = "modello/modello_ottimizzato.pt"
 SCALER_PATH  = "modello/scaler.pkl"
 
 # Iperparametri (devono corrispondere a quelli dell'addestramento)
@@ -555,24 +555,69 @@ class InferenzaRisse:
         print(cm)
 
         os.makedirs("grafici", exist_ok=True)
-        fig, ax = plt.subplots(figsize=(6, 5))
+        dim_labels = 14
+        dim_titoli = 16
+        fig_size = (6, 5)
+
+    
+        fig, ax = plt.subplots(figsize=fig_size)
         im = ax.imshow(cm, cmap='Blues')
+
         ax.set_xticks([0, 1])
         ax.set_yticks([0, 1])
-        ax.set_xticklabels(["no_fight", "fight"])
-        ax.set_yticklabels(["no_fight", "fight"])
-        ax.set_xlabel("Predetto")
-        ax.set_ylabel("Reale")
-        ax.set_title("Matrice di Confusione — Test Set (UCF-Crime)")
+        ax.set_xticklabels(["no_fight", "fight"], fontsize=dim_labels)
+        ax.set_yticklabels(["no_fight", "fight"], fontsize=dim_labels)
+        ax.set_xlabel("Predetto", fontsize=dim_titoli)
+        ax.set_ylabel("Reale", fontsize=dim_titoli)
+
+        thresh_assoluta = 2000
+
         for i in range(2):
             for j in range(2):
-                ax.text(j, i, str(cm[i, j]),
-                        ha='center', va='center', fontsize=20, fontweight='bold')
+                colore_testo = "white" if cm[i, j] > thresh_assoluta else "black"
+                ax.text(j, i, str(cm[i, j]), 
+                        ha='center', va='center', 
+                        fontsize=20, fontweight='bold', 
+                        color=colore_testo)
+
         plt.colorbar(im)
         plt.tight_layout()
-        plt.savefig("grafici/confusion_matrix_test.png", dpi=150)
+        plt.savefig("grafici/confusion_matrix.png", dpi=150)
         plt.close()
-        print("\nGrafico salvato: grafici/confusion_matrix_test.png")
+        print("Grafico 1 salvato: grafici/confusion_matrix.png")
+
+    
+        cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+
+        fig, ax = plt.subplots(figsize=fig_size)
+        im = ax.imshow(cm_norm, cmap='Blues')
+
+        ax.set_xticks([0, 1])
+        ax.set_yticks([0, 1])
+    
+    
+        ax.set_xticklabels(["no_fight", "fight"], fontsize=dim_labels)
+        ax.set_xlabel("Predetto", fontsize=dim_titoli)
+
+        ax.set_yticklabels(["no_fight", "fight"], fontsize=dim_labels, color='white')
+        ax.set_ylabel("Reale", fontsize=dim_titoli, color='white')
+        ax.tick_params(axis='y', colors='white')
+
+        thresh_norm = 0.5
+
+        for i in range(2):
+            for j in range(2):
+                colore_testo = "white" if cm_norm[i, j] > thresh_norm else "black"
+                ax.text(j, i, f"{cm_norm[i, j]:.2f}", 
+                        ha='center', va='center', 
+                        fontsize=20, fontweight='bold', 
+                        color=colore_testo)
+
+        plt.colorbar(im)
+        plt.tight_layout()
+        plt.savefig("grafici/confusion_matrix_norm.png", dpi=150)
+        plt.close()
+        print("Grafico 2 salvato: grafici/confusion_matrix_norm.png")
 
 
 # ══════════════════════════════════════════════════════════════════

@@ -382,26 +382,74 @@ def main():
     plt.close()
     print("Grafico salvato: grafici/accuracy.png")
 
-    # Grafico 3: Matrice di confusione
+    # Grafico 3: Matrice di confusione (Assoluta)
     fig, ax = plt.subplots(figsize=(6, 5))
     im = ax.imshow(cm, cmap='Blues')
+    
+    dim_labels = 14
+    dim_titoli = 16
+    fig_size = (6, 5)
+
+    
+    fig, ax = plt.subplots(figsize=fig_size)
+    im = ax.imshow(cm, cmap='Blues')
+
     ax.set_xticks([0, 1])
     ax.set_yticks([0, 1])
-    ax.set_xticklabels(["no_fight", "fight"])
-    ax.set_yticklabels(["no_fight", "fight"])
-    ax.set_xlabel("Predetto")
-    ax.set_ylabel("Reale")
-    ax.set_title("Matrice di Confusione")
-    # Scrivi i numeri dentro le celle
+    ax.set_xticklabels(["no_fight", "fight"], fontsize=dim_labels)
+    ax.set_yticklabels(["no_fight", "fight"], fontsize=dim_labels)
+    ax.set_xlabel("Predetto", fontsize=dim_titoli)
+    ax.set_ylabel("Reale", fontsize=dim_titoli)
+
+    thresh_assoluta = 2000
+
     for i in range(2):
         for j in range(2):
-            ax.text(j, i, str(cm[i, j]), ha='center', va='center', fontsize=20, fontweight='bold')
+            colore_testo = "white" if cm[i, j] > thresh_assoluta else "black"
+            ax.text(j, i, str(cm[i, j]), 
+                    ha='center', va='center', 
+                    fontsize=20, fontweight='bold', 
+                    color=colore_testo)
+
     plt.colorbar(im)
     plt.tight_layout()
     plt.savefig("grafici/confusion_matrix.png", dpi=150)
     plt.close()
-    print("Grafico salvato: grafici/confusion_matrix.png")
+    print("Grafico 1 salvato: grafici/confusion_matrix.png")
 
+    
+    cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+
+    fig, ax = plt.subplots(figsize=fig_size)
+    im = ax.imshow(cm_norm, cmap='Blues')
+
+    ax.set_xticks([0, 1])
+    ax.set_yticks([0, 1])
+    
+    
+    ax.set_xticklabels(["no_fight", "fight"], fontsize=dim_labels)
+    ax.set_xlabel("Predetto", fontsize=dim_titoli)
+
+    
+    ax.set_yticklabels(["no_fight", "fight"], fontsize=dim_labels, color='white')
+    ax.set_ylabel("Reale", fontsize=dim_titoli, color='white')
+    ax.tick_params(axis='y', colors='white')
+
+    thresh_norm = 0.5
+
+    for i in range(2):
+        for j in range(2):
+            colore_testo = "white" if cm_norm[i, j] > thresh_norm else "black"
+            ax.text(j, i, f"{cm_norm[i, j]:.2f}", 
+                    ha='center', va='center', 
+                    fontsize=20, fontweight='bold', 
+                    color=colore_testo)
+
+    plt.colorbar(im)
+    plt.tight_layout()
+    plt.savefig("grafici/confusion_matrix_norm.png", dpi=150)
+    plt.close()
+    print("Grafico 2 salvato: grafici/confusion_matrix_norm.png")
     print(f"\n{'='*60}")
     print(" TUTTO COMPLETATO!")
     print(f" Modello:  {percorso_modello}")
