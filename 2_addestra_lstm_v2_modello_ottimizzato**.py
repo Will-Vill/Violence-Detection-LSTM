@@ -31,7 +31,7 @@ print(f"Viene utilizzato il dispositivo: {dispositivo}")
 CARTELLA_INPUT = "tipi_output_yolo/output_YOLOnNANO"
 CARTELLA_MODELLI = "modello"
 
-# Costanti e iperparametri — IDENTICI al modello base
+# Costanti e iperparametri
 FINESTRA = 45
 STRIDE = 15
 NUM_FEATURES = 69  # 34 coordinate + 34 velocità + 1 distanza
