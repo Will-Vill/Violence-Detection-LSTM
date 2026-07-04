@@ -29,7 +29,7 @@ MODELLO_YOLO = "yolo26n-pose.pt"
 MODELLO_LSTM = "modello/modello_ottimizzato.pt"
 SCALER_PATH  = "modello/scaler.pkl"
 
-# Iperparametri (devono corrispondere a quelli dell'addestramento)
+# Iperparametri
 FINESTRA      = 45
 STRIDE        = 15
 NUM_FEATURES  = 69
