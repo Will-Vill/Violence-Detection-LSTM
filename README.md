@@ -20,7 +20,7 @@ As shown in the diagram, the project is structured in a sequential pipeline:
 
 **Python version:** 3.14.7
 
-```bashh
+```bash
 python -m venv env_tesi
 source env_tesi/bin/activate   # on Linux/macOS
 pip install -r requirements.txt
