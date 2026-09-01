@@ -57,4 +57,6 @@ python 3_inferenza.py [-h] (--video VIDEO | --webcam | --test TEST) [--no-save]
 
 <img width="1250" height="707" alt="rissa1" src="https://github.com/user-attachments/assets/66708add-b042-493b-b1ad-c50735fb74f0" />
 
+> Note: diagram labels are in Italian (original thesis language).
+
 
