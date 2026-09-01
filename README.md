@@ -1,4 +1,4 @@
-# Violence Detection using LSTM & MediaPipe
+# Violence Detection using LSTM & YOLO-Pose
 
 > A Deep Learning pipeline to automatically detect fighting and violent behaviors in video streams using Pose Estimation and Long Short-Term Memory (LSTM) neural networks.
 
@@ -12,7 +12,7 @@
 
 As shown in the diagram, the project is structured in a sequential pipeline:
 
-* **1. Pose Estimation (`1_estrai_keypoints.py`)**: Uses MediaPipe to extract human pose landmarks (skeletons) from raw video frames.
+* **1. Pose Estimation (`1_estrai_keypoints.py`)**: Uses YOLO-Pose to extract human pose landmarks (skeletons) from raw video frames.
 * **2. LSTM Training (`2_addestra_lstm_v2_modello_ottimizzato.py`)**: Trains an optimized LSTM network on sequences of 45 frames to capture the temporal dynamics of the fight.
 * **3. Inference (`3_inferenza.py`)**: Runs the trained model on new video streams in real-time.
 
